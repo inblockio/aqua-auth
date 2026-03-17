@@ -1,0 +1,37 @@
+[package]
+name = "aqua-auth"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "CAIP-122 authenticated sessions for aqua-node — challenge-response auth with EIP-191, Ed25519, and P-256 verification"
+
+[dependencies]
+# Crypto — all 3 verifiers are first-class, no feature gates
+k256 = { version = "0.13", features = ["ecdsa"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+sha3 = "0.10"
+
+# Core
+rand = "0.8"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6"
+tokio = { version = "1", features = ["time", "rt"] }
+
+# Optional: client helpers
+[dependencies.reqwest]
+version = "0.12"
+default-features = false
+features = ["json", "rustls-tls"]
+optional = true
+
+[features]
+default = []
+client = ["dep:reqwest"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
