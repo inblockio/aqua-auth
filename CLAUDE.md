@@ -1,0 +1,111 @@
+# aqua-rs-auth (crate: `aqua-auth`)
+
+## Goal
+
+Universal authentication library for the Aqua Protocol ecosystem. Implements CAIP-122 ("Sign In With X") challenge-response authentication, providing both client and server components for any two Aqua services to authenticate with each other: node-to-node, web-app-to-node, mobile-app-to-node, or any client-server pair.
+
+Intended for publication on **crates.io** as the default auth crate for the Aqua ecosystem.
+
+## Architecture
+
+### Auth Flow
+
+1. Client requests a challenge from the server (`ChallengeStore::create`)
+2. Server returns a CAIP-122-compliant message with a nonce
+3. Client signs the message with their DID's private key
+4. Server verifies the signature (`verify_caip122`) and issues a session token (`SessionStore::create`)
+5. Client uses the session token for subsequent requests
+
+### Signature Schemes
+
+Three DID namespaces, mirroring the signatures supported by `aqua-rs-sdk`:
+
+| Namespace | DID Format | Verifier |
+|---|---|---|
+| `eip155` | `did:pkh:eip155:1:0x{address}` | EIP-191 ecrecover (secp256k1) |
+| `ed25519` | `did:pkh:ed25519:0x{pubkey}` | ed25519-dalek |
+| `p256` | `did:pkh:p256:0x{compressed}` | P-256 ECDSA |
+
+If aqua-rs-sdk adds a new signature scheme, this crate must add a corresponding verifier.
+
+### Module Layout
+
+```
+src/
+  lib.rs              # Public API, verify_caip122 dispatcher
+  types.rs            # Challenge, Session, SessionInfo, SessionRequest, AuthenticatedDid
+  error.rs            # AuthError enum
+  did.rs              # DID parsing for all namespaces
+  message.rs          # CAIP-122 message construction
+  challenge.rs        # ChallengeStore (nonce generation + TTL)
+  session.rs          # SessionStore (token management + background cleanup)
+  client.rs           # HTTP client helpers (feature: "client")
+  verify_eip191.rs    # EIP-191 verification
+  verify_ed25519.rs   # Ed25519 verification
+  verify_p256.rs      # P-256 verification
+```
+
+### Store Backend
+
+Currently in-memory (`DashMap`). Non-persistent is acceptable, but the design should evolve toward:
+
+- A pluggable store trait so backends can be swapped
+- Redis as the default production backend
+
+## Upstream Dependencies
+
+- **aqua-rs-sdk** (`~/aqua-rs-sdk`): Defines which signature schemes exist in the protocol. This crate's namespace support must stay in sync.
+
+## Consumers
+
+- **aqua-node**: Primary server-side consumer
+- **aqua-fire**: Aquafier service
+- **Mobile apps**: Client-side auth via the `client` feature
+- **Web apps and CLIs**: Any client connecting to an aqua-node
+
+## Standards Compliance
+
+### CAIP-122 Message Format (DO NOT MODIFY without discussion)
+
+The message format in `message.rs` must remain CAIP-122 compliant. Changes to the message structure require review against the CAIP-122 specification. The format is also SIWE-compatible for `eip155` DIDs (renders correctly in MetaMask).
+
+## Public API Surface (DO NOT MODIFY without discussion)
+
+Since this crate is headed for crates.io, the public API is subject to semver. Breaking changes to exported types, traits, or function signatures require a major version bump and explicit discussion.
+
+## Development
+
+### Build & Test
+
+```bash
+cargo build                    # Build with default features
+cargo build --features client  # Build with HTTP client
+cargo test                     # Run all 37 tests
+cargo doc --open               # Generate and view docs
+```
+
+### Testing Requirements
+
+Every signature verifier must include:
+
+- **Roundtrip test**: Generate keypair, sign, verify succeeds
+- **Wrong-DID test**: Valid signature, wrong DID, verify fails
+- **Tampered-message test**: Modify message after signing, verify fails
+- **Invalid-signature-length test**: Reject malformed signatures
+
+Challenge and session stores must test: creation, validation, TTL expiration, and cleanup.
+
+### Adding a New Signature Scheme
+
+1. Add a `verify_{scheme}.rs` module with the verification function
+2. Add a DID parser in `did.rs` for the new namespace
+3. Add a message label/chain-id branch in `message.rs`
+4. Wire the namespace into `verify_caip122` in `lib.rs`
+5. Add the full test suite (roundtrip + negative tests as above)
+6. Confirm the namespace matches what aqua-rs-sdk supports
+
+## Roadmap
+
+- [ ] Pluggable store trait with Redis as default backend
+- [ ] CI/CD pipeline (GitHub Actions)
+- [ ] crates.io publication prep (README, license file, metadata)
