@@ -3,6 +3,7 @@
 //! Provides a simple `authenticate()` function that runs the full
 //! challenge-response flow against an aqua-node endpoint.
 
+use crate::did::{identifier_from_did, identifier_from_message};
 use crate::error::AuthError;
 use crate::types::Session;
 use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
@@ -42,6 +43,27 @@ where
         .json()
         .await
         .map_err(AuthClientError::Http)?;
+
+    // 1a. Defense in depth: verify the identifier embedded in the SIWE
+    //     message matches the identifier derived from the requested DID.
+    //     A friendly server has no reason to mint a challenge with the
+    //     wrong identifier; a hostile (or TLS-broken) one might try to
+    //     trick a programmatic signer into signing as a different account.
+    //     The signature would still fail server-side verification, but
+    //     catching it here means we never even sign the malformed message.
+    let expected = identifier_from_did(did).map_err(AuthClientError::Auth)?;
+    let actual = identifier_from_message(&envelope.message).ok_or_else(|| {
+        AuthClientError::MessageIdentifierMismatch {
+            expected: expected.clone(),
+            actual: "<message missing identifier line>".to_string(),
+        }
+    })?;
+    if actual != expected {
+        return Err(AuthClientError::MessageIdentifierMismatch {
+            expected,
+            actual: actual.to_string(),
+        });
+    }
 
     // 2. Sign the message
     let signature = sign_fn(&envelope.message)
@@ -90,4 +112,9 @@ pub enum AuthClientError {
     Sign(String),
     #[error("auth error: {0}")]
     Auth(#[from] AuthError),
+    /// The identifier embedded in the server's CAIP-122 message does not
+    /// match the identifier derived from the DID we requested. The client
+    /// refused to sign rather than emit a signature for the wrong account.
+    #[error("server message identifier mismatch: expected {expected}, got {actual}")]
+    MessageIdentifierMismatch { expected: String, actual: String },
 }

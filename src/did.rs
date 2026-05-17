@@ -113,6 +113,29 @@ pub fn eip55_checksum(addr: &[u8; 20]) -> String {
     result
 }
 
+/// Extract the identifier line from a CAIP-122 message body.
+///
+/// The Aqua CAIP-122 message format (see `crate::message::build_message`)
+/// places the identifier on the second line, immediately after the
+/// `{domain} wants you to sign in with your {method_label} account:` line.
+/// This helper returns that line's trimmed content, or `None` if the
+/// message is malformed (less than two lines, or empty second line).
+///
+/// Used by `client::authenticate` to verify that the identifier the server
+/// embedded in the message matches the identifier derived from the
+/// caller's DID before signing.
+pub fn identifier_from_message(message: &str) -> Option<&str> {
+    // Tolerate both `\n` and `\r\n` line endings.
+    let mut lines = message.split('\n');
+    let _ = lines.next()?; // skip the "domain wants..." line
+    let id = lines.next()?.trim_end_matches('\r').trim();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
 /// Extract the `identifier` field for a CAIP-122 message from a DID.
 ///
 /// - `eip155` → `0x{EIP-55 checksummed address}`
@@ -190,5 +213,47 @@ mod tests {
     #[test]
     fn invalid_did_prefix() {
         assert!(parse_did_namespace("not:a:did").is_err());
+    }
+
+    #[test]
+    fn identifier_from_message_extracts_eip155() {
+        let msg = "timestamp.inblock.io wants you to sign in with your Ethereum account:\n\
+                   0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed\n\
+                   \n\
+                   Sign in to Aqua Node\n";
+        assert_eq!(
+            identifier_from_message(msg),
+            Some("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")
+        );
+    }
+
+    #[test]
+    fn identifier_from_message_extracts_ed25519() {
+        let pk_hex = hex::encode([0xAA; 32]);
+        let msg = format!(
+            "aqua-node wants you to sign in with your Ed25519 account:\n\
+             0x{pk_hex}\n\
+             \n\
+             Sign in to Aqua Node"
+        );
+        assert_eq!(identifier_from_message(&msg), Some(&*format!("0x{pk_hex}")));
+    }
+
+    #[test]
+    fn identifier_from_message_tolerates_crlf() {
+        let msg = "domain wants you...\r\n0xABC\r\n\r\n";
+        assert_eq!(identifier_from_message(msg), Some("0xABC"));
+    }
+
+    #[test]
+    fn identifier_from_message_rejects_too_short() {
+        assert!(identifier_from_message("").is_none());
+        assert!(identifier_from_message("only one line").is_none());
+    }
+
+    #[test]
+    fn identifier_from_message_rejects_empty_identifier() {
+        let msg = "domain wants you...\n\n\nstatement\n";
+        assert!(identifier_from_message(msg).is_none());
     }
 }
