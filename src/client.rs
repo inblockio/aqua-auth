@@ -4,13 +4,20 @@
 //! challenge-response flow against an aqua-node endpoint.
 
 use crate::error::AuthError;
-use crate::types::{Challenge, Session, SessionRequest};
+use crate::types::Session;
+use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 
 /// Run the full CAIP-122 challenge-response flow.
 ///
-/// 1. `GET /auth/challenge?did=<did>` — obtain a challenge
+/// Wire contract: `GET /auth/challenge?did=<did>` returns [`ChallengeEnvelope`]
+/// (no `did` field; the server omits it because the client supplied the DID in
+/// the query string). `POST /auth/session` accepts [`SessionRequest`] and
+/// returns [`SessionResponse`]. Both are defined in [`crate::wire`].
+///
+/// 1. `GET /auth/challenge?did=<did>` — obtain a [`ChallengeEnvelope`]
 /// 2. Sign the challenge message using the provided `sign_fn`
-/// 3. `POST /auth/session` — exchange signed challenge for a session token
+/// 3. `POST /auth/session` — exchange signed challenge for a [`SessionResponse`],
+///    translated into the internal [`Session`] type for callers
 ///
 /// The `sign_fn` takes the canonical CAIP-122 message and returns
 /// the hex-encoded signature (with or without `0x` prefix).
@@ -23,9 +30,9 @@ pub async fn authenticate<F>(
 where
     F: FnOnce(&str) -> Result<String, Box<dyn std::error::Error + Send + Sync>>,
 {
-    // 1. Request challenge
+    // 1. Request challenge — server returns ChallengeEnvelope (no `did` field)
     let challenge_url = format!("{base_url}/auth/challenge?did={}", urlencoded(did));
-    let challenge: Challenge = http
+    let envelope: ChallengeEnvelope = http
         .get(&challenge_url)
         .send()
         .await
@@ -37,18 +44,18 @@ where
         .map_err(AuthClientError::Http)?;
 
     // 2. Sign the message
-    let signature = sign_fn(&challenge.message)
+    let signature = sign_fn(&envelope.message)
         .map_err(|e| AuthClientError::Sign(e.to_string()))?;
 
     // 3. Exchange for session
     let session_url = format!("{base_url}/auth/session");
     let req = SessionRequest {
         did: did.to_string(),
-        nonce: challenge.nonce,
+        nonce: envelope.nonce,
         signature,
     };
 
-    let session: Session = http
+    let resp: SessionResponse = http
         .post(&session_url)
         .json(&req)
         .send()
@@ -60,7 +67,12 @@ where
         .await
         .map_err(AuthClientError::Http)?;
 
-    Ok(session)
+    Ok(Session {
+        did: resp.did,
+        token: resp.token,
+        valid_until: resp.valid_until,
+        created_at: resp.created_at,
+    })
 }
 
 /// Minimal URL encoding for the DID (colons are safe in query values but

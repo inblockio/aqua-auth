@@ -27,6 +27,7 @@ pub mod error;
 pub mod message;
 pub mod session;
 pub mod types;
+pub mod wire;
 mod verify_ed25519;
 mod verify_eip191;
 mod verify_p256;
@@ -34,7 +35,10 @@ mod verify_p256;
 pub use challenge::ChallengeStore;
 pub use error::AuthError;
 pub use session::SessionStore;
-pub use types::{AuthenticatedDid, Challenge, Session, SessionInfo, SessionRequest};
+pub use types::{AuthenticatedDid, Challenge, Session, SessionInfo};
+// `types::SessionRequest` remains accessible as `aqua_auth::types::SessionRequest` for
+// server-side code. The canonical crate-root `SessionRequest` is the wire type below.
+pub use wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 
 /// Verify a CAIP-122 session signature. Dispatches on DID namespace.
 ///

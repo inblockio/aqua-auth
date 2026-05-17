@@ -16,7 +16,7 @@ use p256::EncodedPoint;
 pub fn verify(did: &str, message: &str, signature: &[u8]) -> Result<bool, AuthError> {
     let pubkey_bytes = pubkey_from_p256_did(did)?;
 
-    let point = EncodedPoint::from_bytes(&pubkey_bytes)
+    let point = EncodedPoint::from_bytes(pubkey_bytes)
         .map_err(|e| AuthError::InvalidSignature(format!("invalid p256 encoded point: {e}")))?;
 
     let verifying_key = VerifyingKey::from_encoded_point(&point)
@@ -64,7 +64,7 @@ mod tests {
         let msg = "hello aqua-node";
         let sig: Signature = key.sign(msg.as_bytes());
         // Use DER encoding
-        assert!(verify(&did, msg, &sig.to_der().as_bytes()).unwrap());
+        assert!(verify(&did, msg, sig.to_der().as_bytes()).unwrap());
     }
 
     #[test]

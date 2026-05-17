@@ -2,7 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A challenge issued to a client for CAIP-122 authentication.
+/// Server-side stored record for an issued CAIP-122 challenge.
+///
+/// This is the **internal** representation held in [`crate::ChallengeStore`].
+/// It is not the on-wire shape: the HTTP response body for
+/// `GET /auth/challenge` omits `did` and uses [`crate::wire::ChallengeEnvelope`]
+/// as the canonical wire type instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Challenge {
     /// The DID that requested this challenge.
