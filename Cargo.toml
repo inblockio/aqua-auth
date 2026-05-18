@@ -2,9 +2,10 @@
 name = "aqua-auth"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
+readme = "README.md"
 repository = "https://github.com/inblockio/aqua-rs-auth"
-description = "CAIP-122 session authentication for the Aqua Protocol — challenge-response auth with EIP-191, Ed25519, and P-256 signature verification"
+description = "CAIP-122 session authentication for the Aqua Protocol: challenge-response auth with EIP-191, Ed25519, and P-256 signature verification"
 
 [dependencies]
 # Crypto — all 3 verifiers are first-class, no feature gates
