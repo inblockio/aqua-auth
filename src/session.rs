@@ -3,8 +3,8 @@
 //! Sessions have a 1-hour TTL. A background tokio task sweeps expired
 //! sessions every 60 seconds.
 
+use crate::auth_error::AuthError;
 use crate::challenge::ChallengeStore;
-use crate::error::AuthError;
 use crate::types::{Session, SessionInfo};
 use chrono::Utc;
 use dashmap::DashMap;
@@ -56,10 +56,7 @@ impl SessionStore {
 
     /// Validate a session token. Returns the associated DID if valid.
     pub fn validate(&self, token: &str) -> Result<String, AuthError> {
-        let session = self
-            .sessions
-            .get(token)
-            .ok_or(AuthError::SessionNotFound)?;
+        let session = self.sessions.get(token).ok_or(AuthError::SessionNotFound)?;
 
         let now = Utc::now().timestamp() as u64;
         if now >= session.valid_until {
@@ -112,9 +109,7 @@ impl SessionStore {
     ) {
         let session_store = Arc::clone(self);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                std::time::Duration::from_secs(interval_secs),
-            );
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             loop {
                 interval.tick().await;
                 session_store.cleanup_expired();

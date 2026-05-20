@@ -1,39 +1,38 @@
 [package]
 name = "aqua-auth"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/inblockio/aqua-rs-auth"
-description = "CAIP-122 session authentication for the Aqua Protocol: challenge-response auth with EIP-191, Ed25519, and P-256 signature verification"
+description = "DID-based authentication for the Aqua Protocol. Crypto/DID primitives by default; challenge-response sessions behind the `http` feature."
+
+[features]
+default = []
+http = ["dep:rand", "dep:serde_json", "dep:chrono", "dep:dashmap", "dep:tokio"]
+client = ["http", "dep:reqwest"]
 
 [dependencies]
-# Crypto — all 3 verifiers are first-class, no feature gates
+# Always (crypto layer)
 k256 = { version = "0.13", features = ["ecdsa"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
 sha3 = "0.10"
-
-# Core
-rand = "0.8"
+bs58 = "0.5"
 hex = "0.4"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 thiserror = "2"
-chrono = { version = "0.4", features = ["serde"] }
-dashmap = "6"
-tokio = { version = "1", features = ["time", "rt"] }
+serde = { version = "1", features = ["derive"] }
 
-# Optional: client helpers
-[dependencies.reqwest]
-version = "0.12"
-default-features = false
-features = ["json", "rustls-tls"]
-optional = true
+# Behind `http` feature
+rand = { version = "0.8", optional = true }
+serde_json = { version = "1", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
+dashmap = { version = "6", optional = true }
+tokio = { version = "1", features = ["time", "rt"], optional = true }
 
-[features]
-default = []
-client = ["dep:reqwest"]
+# Behind `client` feature
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+rand = "0.8"

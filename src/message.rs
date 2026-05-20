@@ -1,10 +1,8 @@
 //! CAIP-122 canonical message construction (SIWE-compatible format).
-//!
-//! The message follows the Sign-In with Ethereum (EIP-4361 / SIWE) structure,
-//! generalized for Ed25519 and P-256 signers.
 
+use crate::auth_error::AuthError;
+use crate::crypto_error::CryptoError;
 use crate::did::{identifier_from_did, parse_did_namespace};
-use crate::error::AuthError;
 use chrono::{DateTime, Utc};
 
 /// Parameters for constructing a CAIP-122 message.
@@ -32,10 +30,10 @@ pub fn build_message(params: &MessageParams) -> Result<String, AuthError> {
     let identifier = identifier_from_did(params.did)?;
 
     let method_label = match ns {
-        "eip155"  => "Ethereum",
+        "eip155" => "Ethereum",
         "ed25519" => "Ed25519",
-        "p256"    => "P-256",
-        other     => return Err(AuthError::UnsupportedMethod(other.into())),
+        "p256" => "P-256",
+        other => Err(CryptoError::UnsupportedMethod(other.into()))?,
     };
 
     let issued_at = params.issued_at.format("%Y-%m-%dT%H:%M:%S%.3fZ");

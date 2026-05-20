@@ -3,8 +3,8 @@
 //! Provides a simple `authenticate()` function that runs the full
 //! challenge-response flow against an aqua-node endpoint.
 
+use crate::auth_error::AuthError;
 use crate::did::{identifier_from_did, identifier_from_message};
-use crate::error::AuthError;
 use crate::types::Session;
 use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 
@@ -15,9 +15,9 @@ use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 /// the query string). `POST /auth/session` accepts [`SessionRequest`] and
 /// returns [`SessionResponse`]. Both are defined in [`crate::wire`].
 ///
-/// 1. `GET /auth/challenge?did=<did>` — obtain a [`ChallengeEnvelope`]
+/// 1. `GET /auth/challenge?did=<did>` -- obtain a [`ChallengeEnvelope`]
 /// 2. Sign the challenge message using the provided `sign_fn`
-/// 3. `POST /auth/session` — exchange signed challenge for a [`SessionResponse`],
+/// 3. `POST /auth/session` -- exchange signed challenge for a [`SessionResponse`],
 ///    translated into the internal [`Session`] type for callers
 ///
 /// The `sign_fn` takes the canonical CAIP-122 message and returns
@@ -31,7 +31,7 @@ pub async fn authenticate<F>(
 where
     F: FnOnce(&str) -> Result<String, Box<dyn std::error::Error + Send + Sync>>,
 {
-    // 1. Request challenge — server returns ChallengeEnvelope (no `did` field)
+    // 1. Request challenge
     let challenge_url = format!("{base_url}/auth/challenge?did={}", urlencoded(did));
     let envelope: ChallengeEnvelope = http
         .get(&challenge_url)
@@ -46,12 +46,7 @@ where
 
     // 1a. Defense in depth: verify the identifier embedded in the SIWE
     //     message matches the identifier derived from the requested DID.
-    //     A friendly server has no reason to mint a challenge with the
-    //     wrong identifier; a hostile (or TLS-broken) one might try to
-    //     trick a programmatic signer into signing as a different account.
-    //     The signature would still fail server-side verification, but
-    //     catching it here means we never even sign the malformed message.
-    let expected = identifier_from_did(did).map_err(AuthClientError::Auth)?;
+    let expected = identifier_from_did(did).map_err(|e| AuthClientError::Auth(e.into()))?;
     let actual = identifier_from_message(&envelope.message).ok_or_else(|| {
         AuthClientError::MessageIdentifierMismatch {
             expected: expected.clone(),
@@ -112,9 +107,6 @@ pub enum AuthClientError {
     Sign(String),
     #[error("auth error: {0}")]
     Auth(#[from] AuthError),
-    /// The identifier embedded in the server's CAIP-122 message does not
-    /// match the identifier derived from the DID we requested. The client
-    /// refused to sign rather than emit a signature for the wrong account.
     #[error("server message identifier mismatch: expected {expected}, got {actual}")]
     MessageIdentifierMismatch { expected: String, actual: String },
 }

@@ -1,61 +1,80 @@
 //! # aqua-auth
 //!
-//! CAIP-122 ("Sign In With X") session authentication for the Aqua Protocol.
+//! DID-based authentication for the Aqua Protocol.
 //!
-//! Provides:
-//! - **CAIP-122 message construction** — SIWE-compatible format, generalized for
-//!   Ed25519 and P-256 signers.
-//! - **Chain-dispatching signature verification** — `verify_caip122()` dispatches
-//!   on DID namespace to the appropriate verifier.
-//! - **ChallengeStore** — in-memory, 5-min TTL, single-use nonces.
-//! - **SessionStore** — in-memory, 1-hr TTL, background sweep.
-//! - **Client helpers** — (behind `client` feature flag) reqwest-based auth flow.
+//! **Default features (crypto/DID layer):**
+//! - CipherSuite and DIDMethod trait registries
+//! - did:pkh (eip155, ed25519, p256), did:key, did:peer verification
+//! - DID parsing, identifier extraction, EIP-55 checksumming
+//! - `verify_caip122()` signature verification dispatch
 //!
-//! # Supported DID methods
+//! **`http` feature (session/auth layer):**
+//! - CAIP-122 message construction
+//! - ChallengeStore (in-memory, 5-min TTL, single-use nonces)
+//! - SessionStore (in-memory, 1-hr TTL, background sweep)
 //!
-//! | Server Verifier | DID Namespace | Signature Format |
-//! |---|---|---|
-//! | EIP-191 ecrecover | `eip155` | 65-byte `r‖s‖v` (v ∈ {27,28}) |
-//! | Ed25519 verify | `ed25519` | 64-byte Ed25519 signature |
-//! | P-256 ECDSA verify | `p256` | 64-byte fixed or DER-encoded |
+//! **`client` feature (implies `http`):**
+//! - reqwest-based challenge-response authentication flow
 
-pub mod challenge;
-#[cfg(feature = "client")]
-pub mod client;
+// --- Always available (crypto/DID layer) ---
+pub mod cipher_suite;
+pub mod crypto_error;
 pub mod did;
-pub mod error;
-pub mod message;
-pub mod session;
-pub mod types;
-pub mod wire;
-mod verify_ed25519;
-mod verify_eip191;
-mod verify_p256;
+pub mod did_method;
+pub mod key;
+pub mod peer;
+pub mod pkh;
 
+pub use cipher_suite::{all_cipher_suites, find_cipher_suite, CipherSuite};
+pub use crypto_error::CryptoError;
+pub use did::{
+    address_from_did, address_from_verifying_key, checksummed_address, eip55_checksum,
+    identifier_from_did, identifier_from_message, parse_did_namespace, pubkey_from_ed25519_did,
+    pubkey_from_p256_did,
+};
+pub use did_method::{all_did_methods, find_did_method, DIDMethod};
+pub use key::{Ed25519Suite, KeyMethod, P256Suite};
+pub use peer::PeerMethod;
+pub use pkh::{Eip155Suite, PkhMethod};
+
+// --- Behind `http` feature (session/auth layer) ---
+#[cfg(feature = "http")]
+pub mod auth_error;
+#[cfg(feature = "http")]
+pub mod challenge;
+#[cfg(feature = "http")]
+pub mod message;
+#[cfg(feature = "http")]
+pub mod session;
+#[cfg(feature = "http")]
+pub mod types;
+#[cfg(feature = "http")]
+pub mod wire;
+
+#[cfg(feature = "http")]
+pub use auth_error::AuthError;
+#[cfg(feature = "http")]
 pub use challenge::ChallengeStore;
-pub use error::AuthError;
+#[cfg(feature = "http")]
+pub use message::{build_message, MessageParams};
+#[cfg(feature = "http")]
 pub use session::SessionStore;
+#[cfg(feature = "http")]
 pub use types::{AuthenticatedDid, Challenge, Session, SessionInfo};
-// `types::SessionRequest` remains accessible as `aqua_auth::types::SessionRequest` for
-// server-side code. The canonical crate-root `SessionRequest` is the wire type below.
+#[cfg(feature = "http")]
 pub use wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 
-/// Verify a CAIP-122 session signature. Dispatches on DID namespace.
+// --- Behind `client` feature ---
+#[cfg(feature = "client")]
+pub mod client;
+
+/// Verify a CAIP-122 session signature.
 ///
-/// - `did` — the full DID string (e.g. `did:pkh:eip155:1:0x...`)
-/// - `message` — the canonical CAIP-122 message that was signed
-/// - `signature` — raw signature bytes (not hex-encoded)
-///
-/// Returns `Ok(true)` if the signature is valid for the DID, `Ok(false)` if
-/// the signature is well-formed but doesn't match, and `Err` on malformed inputs.
-pub fn verify_caip122(did: &str, message: &str, signature: &[u8]) -> Result<bool, AuthError> {
-    let ns = did::parse_did_namespace(did)?;
-    match ns {
-        "eip155"  => verify_eip191::verify(did, message, signature),
-        "ed25519" => verify_ed25519::verify(did, message, signature),
-        "p256"    => verify_p256::verify(did, message, signature),
-        other     => Err(AuthError::UnsupportedMethod(other.into())),
-    }
+/// Dispatches to the DIDMethod registry (did:pkh, did:key, did:peer).
+pub fn verify_caip122(did: &str, message: &str, signature: &[u8]) -> Result<bool, CryptoError> {
+    let method =
+        find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
+    method.verify(did, message, signature)
 }
 
 #[cfg(test)]
@@ -64,15 +83,14 @@ mod tests {
 
     #[test]
     fn dispatch_eip155() {
-        // Generate a secp256k1 key, sign, and verify via dispatch
         use k256::ecdsa::SigningKey;
         use rand::rngs::OsRng;
         use sha3::{Digest, Keccak256};
 
         let secret = k256::SecretKey::random(&mut OsRng);
         let signing_key = SigningKey::from(&secret);
-        let addr = did::address_from_verifying_key(signing_key.verifying_key());
-        let did_str = format!("did:pkh:eip155:1:0x{}", did::eip55_checksum(&addr));
+        let addr = address_from_verifying_key(signing_key.verifying_key());
+        let did_str = format!("did:pkh:eip155:1:0x{}", eip55_checksum(&addr));
 
         let msg = "test dispatch eip155";
         let prefix = format!("\x19Ethereum Signed Message:\n{}", msg.len());
@@ -126,12 +144,17 @@ mod tests {
         let result = verify_caip122("did:pkh:solana:0xabc", "msg", &[0u8; 64]);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, AuthError::UnsupportedMethod(_)));
+        assert!(matches!(err, CryptoError::UnsupportedMethod(_)));
     }
 
     #[test]
     fn invalid_did_prefix_returns_error() {
         let result = verify_caip122("not:a:did", "msg", &[0u8; 64]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn did_key_dispatches() {
+        assert!(find_did_method("did:key:z6MkiTBz1y").is_some());
     }
 }

@@ -3,7 +3,7 @@
 //! Challenges have a 5-minute TTL. Expired challenges are cleaned up lazily
 //! on access and via the session store's background sweep.
 
-use crate::error::AuthError;
+use crate::auth_error::AuthError;
 use crate::message::{build_message, MessageParams};
 use crate::types::Challenge;
 use chrono::{Duration, Utc};
