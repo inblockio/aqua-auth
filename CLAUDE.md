@@ -18,31 +18,52 @@ Intended for publication on **crates.io** as the default auth crate for the Aqua
 
 ### Signature Schemes
 
-Three DID namespaces, mirroring the signatures supported by `aqua-rs-sdk`:
+Three DID namespaces via `CipherSuite` and `DIDMethod` trait registries:
 
 | Namespace | DID Format | Verifier |
 |---|---|---|
 | `eip155` | `did:pkh:eip155:1:0x{address}` | EIP-191 ecrecover (secp256k1) |
-| `ed25519` | `did:pkh:ed25519:0x{pubkey}` | ed25519-dalek |
-| `p256` | `did:pkh:p256:0x{compressed}` | P-256 ECDSA |
+| `ed25519` | `did:pkh:ed25519:0x{pubkey}` / `did:key:z6Mk...` | ed25519-dalek |
+| `p256` | `did:pkh:p256:0x{compressed}` / `did:key:zDn...` | P-256 ECDSA |
+
+Additionally, `did:peer` (variants 0 and 2) is supported for DID resolution.
 
 If aqua-rs-sdk adds a new signature scheme, this crate must add a corresponding verifier.
+
+### WebAuthn Assertion Verification (feature: `webauthn`)
+
+Standalone P-256 WebAuthn assertion verifier for login flows. Validates rpIdHash, UP flag, origin, challenge, and P-256 signature over `authenticatorData || SHA-256(clientDataJSON)`. No webauthn-rs dependency; uses only `sha2`, `base64`, `serde_json`.
 
 ### Module Layout
 
 ```
 src/
   lib.rs              # Public API, verify_caip122 dispatcher
-  types.rs            # Challenge, Session, SessionInfo, SessionRequest, AuthenticatedDid
-  error.rs            # AuthError enum
-  did.rs              # DID parsing for all namespaces
-  message.rs          # CAIP-122 message construction
-  challenge.rs        # ChallengeStore (nonce generation + TTL)
-  session.rs          # SessionStore (token management + background cleanup)
-  client.rs           # HTTP client helpers (feature: "client")
-  verify_eip191.rs    # EIP-191 verification
-  verify_ed25519.rs   # Ed25519 verification
-  verify_p256.rs      # P-256 verification
+  cipher_suite.rs     # CipherSuite trait, registry
+  crypto_error.rs     # CryptoError enum
+  did.rs              # DID parsing, EIP-55, identifier extraction
+  did_method.rs       # DIDMethod trait, registry
+  pkh/
+    mod.rs            # re-exports Eip155Suite, PkhMethod
+    method.rs         # PkhMethod (DIDMethod for did:pkh)
+    eip155.rs         # Eip155Suite (secp256k1 EIP-191)
+  key/
+    mod.rs            # KeyMethod (DIDMethod for did:key), multibase decode
+    ed25519.rs        # Ed25519Suite
+    p256.rs           # P256Suite
+  peer/
+    mod.rs            # PeerMethod (did:peer variants 0 and 2)
+  --- behind feature "http" ---
+  auth_error.rs       # AuthError (wraps CryptoError)
+  message.rs          # build_message, MessageParams (CAIP-122)
+  challenge.rs        # ChallengeStore (nonce + TTL)
+  session.rs          # SessionStore (token + background sweep)
+  types.rs            # Challenge, Session, SessionInfo, AuthenticatedDid
+  wire.rs             # ChallengeEnvelope, SessionRequest, SessionResponse
+  --- behind feature "client" ---
+  client.rs           # authenticate() async helper
+  --- behind feature "webauthn" ---
+  webauthn.rs         # verify_webauthn_assertion(), WebAuthnAssertionParams
 ```
 
 ### Store Backend
@@ -78,10 +99,14 @@ Since this crate is headed for crates.io, the public API is subject to semver. B
 ### Build & Test
 
 ```bash
-cargo build                    # Build with default features
-cargo build --features client  # Build with HTTP client
-cargo test                     # Run all 37 tests
-cargo doc --open               # Generate and view docs
+cargo build                      # Build with default features (crypto/DID only)
+cargo build --features http      # Build with session/auth layer
+cargo build --features client    # Build with HTTP client (implies http)
+cargo build --features webauthn  # Build with WebAuthn assertion verifier
+cargo test                       # Run all 76 default tests
+cargo test --features webauthn   # Run all 83 tests (includes WebAuthn)
+cargo test --all-features        # Run everything
+cargo doc --open                 # Generate and view docs
 ```
 
 ### Testing Requirements
