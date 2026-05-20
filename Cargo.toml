@@ -11,6 +11,7 @@ description = "DID-based authentication for the Aqua Protocol. Crypto/DID primit
 default = []
 http = ["dep:rand", "dep:serde_json", "dep:chrono", "dep:dashmap", "dep:tokio"]
 client = ["http", "dep:reqwest"]
+webauthn = ["dep:sha2", "dep:base64", "dep:serde_json"]
 
 [dependencies]
 # Always (crypto layer)
@@ -29,6 +30,10 @@ serde_json = { version = "1", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
 dashmap = { version = "6", optional = true }
 tokio = { version = "1", features = ["time", "rt"], optional = true }
+
+# Behind `webauthn` feature
+sha2 = { version = "0.10", optional = true }
+base64 = { version = "0.21", optional = true }
 
 # Behind `client` feature
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }

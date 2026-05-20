@@ -68,6 +68,12 @@ pub use wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 #[cfg(feature = "client")]
 pub mod client;
 
+// --- Behind `webauthn` feature ---
+#[cfg(feature = "webauthn")]
+pub mod webauthn;
+#[cfg(feature = "webauthn")]
+pub use webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
+
 /// Verify a CAIP-122 session signature.
 ///
 /// Dispatches to the DIDMethod registry (did:pkh, did:key, did:peer).
