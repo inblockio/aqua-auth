@@ -39,7 +39,7 @@ let session = authenticate(
 2. Before signing, the client checks that the identifier embedded in the SIWE message body matches the DID's expected identifier. A mismatch returns `AuthClientError::MessageIdentifierMismatch` without invoking the signer (defense in depth).
 3. `POST /auth/session` exchanges the signed challenge for a [`SessionResponse`].
 
-### Server
+### Server (with the `http` feature)
 
 ```rust
 use aqua_auth::{ChallengeStore, SessionStore, verify_caip122};
@@ -80,9 +80,23 @@ Every Aqua service that exposes `/auth/challenge` + `/auth/session` MUST emit th
 
 | Flag | Default | What it gates |
 |---|---|---|
-| `client` | off | `aqua_auth::client::authenticate()` plus the `reqwest` transport dependency |
+| `http` | off | The session/auth layer: CAIP-122 message construction (`message`: `build_message`, `MessageParams`), the on-wire shapes (`wire`: `ChallengeEnvelope`, `SessionRequest`, `SessionResponse`), session/challenge types (`types`), and the in-memory `ChallengeStore` / `SessionStore`. Pulls in `rand`, `serde_json`, `chrono`, `dashmap`, `tokio`. |
+| `client` | off | Implies `http`. Adds `aqua_auth::client::authenticate()` plus the `reqwest` transport dependency. |
+| `webauthn` | off | Standalone P-256 WebAuthn assertion verifier (`verify_webauthn_assertion`, `WebAuthnAssertionParams`). Pulls in `sha2`, `base64`, `serde_json`. Independent of `http`. |
 
-Verifier modules and format primitives (`did`, `message`, `wire`, `verify_caip122`, `ChallengeStore`, `SessionStore`) are unconditionally compiled. Per-namespace gating is deliberately not offered: a service that accepts Aqua CAIP-122 accepts all three namespaces, full stop.
+Only the crypto/DID primitives are unconditionally compiled: the `CipherSuite` and `DIDMethod` registries, the `did`/`did_method`/`key`/`peer`/`pkh` verifier modules, DID parsing and EIP-55 helpers in `did`, and `verify_caip122`. Everything else (`message`, `wire`, `ChallengeStore`, `SessionStore`) lives behind `http`. Per-namespace gating is deliberately not offered: a service that accepts Aqua CAIP-122 accepts all three namespaces, full stop.
+
+## WebAuthn assertion verification (with the `webauthn` feature)
+
+For login flows that authenticate a passkey rather than a raw DID signature, the `webauthn` feature ships a standalone P-256 WebAuthn assertion verifier. It has no `webauthn-rs` dependency and pulls in only `sha2`, `base64`, and `serde_json`.
+
+```rust
+use aqua_auth::{verify_webauthn_assertion, WebAuthnAssertionParams};
+
+verify_webauthn_assertion(&WebAuthnAssertionParams { /* ... */ })?;
+```
+
+The verifier checks the rpIdHash, the user-present (UP) flag, the origin, the expected challenge, and the P-256 signature over `authenticatorData || SHA-256(clientDataJSON)`. It is independent of the `http` session layer.
 
 ## Threat model
 
@@ -107,7 +121,7 @@ When to reach for which:
 
 ## Status
 
-Pre-release (`0.1.0`). API stable enough to depend on; major version bump will signal a wire-format break (none planned).
+`0.2.0`. API stable enough to depend on; major version bump will signal a wire-format break (none planned).
 
 ## License
 
