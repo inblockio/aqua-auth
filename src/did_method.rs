@@ -19,6 +19,9 @@ pub trait DIDMethod: Send + Sync {
         did.starts_with(&prefix)
     }
 
+    /// Short label for the CAIP-122 sign-in message, e.g. `"Ethereum"`, `"Ed25519"`.
+    fn method_label(&self, did: &str) -> Result<&'static str, CryptoError>;
+
     /// Human-readable label for UI display, e.g. `"0x1234...5678 (Ethereum)"`.
     fn display_label(&self, did: &str) -> Result<String, CryptoError>;
 

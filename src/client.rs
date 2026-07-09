@@ -4,7 +4,8 @@
 //! challenge-response flow against an aqua-node endpoint.
 
 use crate::auth_error::AuthError;
-use crate::did::{identifier_from_did, identifier_from_message};
+use crate::did::identifier_from_message;
+use crate::did_method::find_did_method;
 use crate::types::Session;
 use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 
@@ -46,7 +47,14 @@ where
 
     // 1a. Defense in depth: verify the identifier embedded in the SIWE
     //     message matches the identifier derived from the requested DID.
-    let expected = identifier_from_did(did).map_err(|e| AuthClientError::Auth(e.into()))?;
+    let method = find_did_method(did).ok_or_else(|| {
+        AuthClientError::Auth(
+            crate::crypto_error::CryptoError::UnsupportedMethod(did.to_string()).into(),
+        )
+    })?;
+    let expected = method
+        .address_for_message(did)
+        .map_err(|e| AuthClientError::Auth(e.into()))?;
     let actual = identifier_from_message(&envelope.message).ok_or_else(|| {
         AuthClientError::MessageIdentifierMismatch {
             expected: expected.clone(),

@@ -149,6 +149,45 @@ mod tests {
     }
 
     #[test]
+    fn create_challenge_for_did_key_ed25519() {
+        let store = test_store();
+        let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let mut bytes = crate::key::ED25519_PREFIX.to_vec();
+        bytes.extend_from_slice(key.verifying_key().as_bytes());
+        let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());
+
+        let challenge = store.create(&did).unwrap();
+        assert_eq!(challenge.did, did);
+        assert!(challenge.message.contains("Ed25519 account"));
+        assert!(challenge.message.contains("z6Mk"));
+        assert!(!challenge.message.contains("Chain ID"));
+
+        // Verify the signature round-trips
+        use ed25519_dalek::Signer;
+        let sig = key.sign(challenge.message.as_bytes());
+        assert!(crate::verify_caip122(&did, &challenge.message, &sig.to_bytes()).unwrap());
+    }
+
+    #[test]
+    fn create_challenge_for_did_key_p256() {
+        let store = test_store();
+        let key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let compressed = key.verifying_key().to_encoded_point(true);
+        let mut bytes = crate::key::P256_PREFIX.to_vec();
+        bytes.extend_from_slice(compressed.as_bytes());
+        let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());
+
+        let challenge = store.create(&did).unwrap();
+        assert_eq!(challenge.did, did);
+        assert!(challenge.message.contains("P-256 account"));
+        assert!(!challenge.message.contains("Chain ID"));
+
+        use p256::ecdsa::Signer;
+        let sig: p256::ecdsa::Signature = key.sign(challenge.message.as_bytes());
+        assert!(crate::verify_caip122(&did, &challenge.message, &sig.to_bytes()).unwrap());
+    }
+
+    #[test]
     fn cleanup_removes_expired() {
         let store = ChallengeStore::new(0, "aqua-node".into(), "http://127.0.0.1:3000".into());
         let addr_hex = hex::encode([0x42; 20]);

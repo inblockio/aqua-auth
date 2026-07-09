@@ -14,6 +14,16 @@ impl DIDMethod for PkhMethod {
         "pkh"
     }
 
+    fn method_label(&self, did: &str) -> Result<&'static str, CryptoError> {
+        let (ns, _) = split_namespace(did)?;
+        match ns {
+            "eip155" => Ok("Ethereum"),
+            "ed25519" => Ok("Ed25519"),
+            "p256" => Ok("P-256"),
+            other => Err(CryptoError::UnsupportedMethod(other.to_string())),
+        }
+    }
+
     fn display_label(&self, did: &str) -> Result<String, CryptoError> {
         let (ns, _) = split_namespace(did)?;
         let address = self.address_for_message(did)?;

@@ -95,6 +95,16 @@ impl DIDMethod for KeyMethod {
         "key"
     }
 
+    fn method_label(&self, did: &str) -> Result<&'static str, CryptoError> {
+        let z_body = did
+            .strip_prefix("did:key:z")
+            .ok_or_else(|| CryptoError::InvalidDid(did.to_string()))?;
+        match decode_multibase_key(z_body)? {
+            KeyType::Ed25519(_) => Ok("Ed25519"),
+            KeyType::P256(_) => Ok("P-256"),
+        }
+    }
+
     fn display_label(&self, did: &str) -> Result<String, CryptoError> {
         let z_body = did
             .strip_prefix("did:key:z")

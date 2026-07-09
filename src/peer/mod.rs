@@ -58,6 +58,14 @@ impl DIDMethod for PeerMethod {
         did.starts_with("did:peer:0z") || did.starts_with("did:peer:2.")
     }
 
+    fn method_label(&self, did: &str) -> Result<&'static str, CryptoError> {
+        let z_body = extract_z_body(did)?;
+        match decode_multibase_key(&z_body)? {
+            crate::key::KeyType::Ed25519(_) => Ok("Ed25519"),
+            crate::key::KeyType::P256(_) => Ok("P-256"),
+        }
+    }
+
     fn display_label(&self, did: &str) -> Result<String, CryptoError> {
         let z_body = extract_z_body(did)?;
         let label = key_type_label(&decode_multibase_key(&z_body)?);
