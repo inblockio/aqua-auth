@@ -17,4 +17,11 @@ pub enum AuthError {
 
     #[error("session expired")]
     SessionExpired,
+
+    /// H2 hardening: the session store is at its hard capacity
+    /// ([`crate::session::MAX_SESSIONS`] or an overridden value) and purging
+    /// expired entries did not free a slot. The new session is rejected
+    /// rather than evicting an active, authenticated session.
+    #[error("session store at capacity ({max} sessions); new session rejected")]
+    SessionStoreFull { max: usize },
 }

@@ -2,6 +2,18 @@
 //!
 //! Challenges have a 5-minute TTL. Expired challenges are cleaned up lazily
 //! on access and via the session store's background sweep.
+//!
+//! ## H2 hardening: bounded capacity
+//!
+//! The store is hard-capped at [`MAX_CHALLENGES`] entries (overridable via
+//! [`ChallengeStore::with_capacity`]) so an attacker flooding
+//! `GET /auth/challenge` cannot grow this map without bound. At capacity,
+//! `create` first purges expired entries; if that doesn't free a slot, the
+//! single oldest-issued challenge is evicted to make room. Challenges are
+//! pre-auth, single-use, and short-TTL by design, so evicting the oldest one
+//! only inconveniences whoever is flooding the endpoint (their oldest
+//! in-flight challenge stops working) — it never touches an established,
+//! authenticated session. The store is never unbounded.
 
 use crate::auth_error::AuthError;
 use crate::message::{build_message, MessageParams};
@@ -13,6 +25,10 @@ use rand::Rng;
 /// Default challenge TTL in seconds.
 pub const DEFAULT_CHALLENGE_TTL_SECS: u64 = 300; // 5 minutes
 
+/// Default hard cap on concurrently pending challenges. Override via
+/// [`ChallengeStore::with_capacity`].
+pub const MAX_CHALLENGES: usize = 8192;
+
 /// In-memory store for pending authentication challenges.
 pub struct ChallengeStore {
     /// Challenges keyed by nonce.
@@ -23,23 +39,52 @@ pub struct ChallengeStore {
     domain: String,
     /// URI used in CAIP-122 messages.
     uri: String,
+    /// Hard cap on concurrently pending challenges (see [`MAX_CHALLENGES`]).
+    max_challenges: usize,
 }
 
 impl ChallengeStore {
     /// Create a new challenge store with the given configuration.
+    ///
+    /// Capped at [`MAX_CHALLENGES`] pending challenges. Use
+    /// [`Self::with_capacity`] to override the cap.
     pub fn new(ttl_secs: u64, domain: String, uri: String) -> Self {
+        Self::with_capacity(ttl_secs, domain, uri, MAX_CHALLENGES)
+    }
+
+    /// Same as [`Self::new`], but with an explicit hard cap on the number of
+    /// concurrently pending challenges, overriding [`MAX_CHALLENGES`].
+    pub fn with_capacity(
+        ttl_secs: u64,
+        domain: String,
+        uri: String,
+        max_challenges: usize,
+    ) -> Self {
         Self {
             challenges: DashMap::new(),
             ttl_secs,
             domain,
             uri,
+            max_challenges,
         }
     }
 
     /// Generate a new challenge for the given DID.
     ///
     /// Returns the challenge including the canonical CAIP-122 message to sign.
+    ///
+    /// At capacity, expired entries are purged first; if the store is still
+    /// full, the single oldest-issued challenge is evicted to make room (see
+    /// the module docs). This method never grows the store past
+    /// `max_challenges`.
     pub fn create(&self, did: &str) -> Result<Challenge, AuthError> {
+        if self.challenges.len() >= self.max_challenges {
+            self.cleanup_expired();
+            if self.challenges.len() >= self.max_challenges {
+                self.evict_oldest();
+            }
+        }
+
         // Generate 32-byte random nonce
         let mut nonce_bytes = [0u8; 32];
         rand::thread_rng().fill(&mut nonce_bytes);
@@ -66,6 +111,35 @@ impl ChallengeStore {
 
         self.challenges.insert(nonce, challenge.clone());
         Ok(challenge)
+    }
+
+    /// Evict the single oldest-issued pending challenge to free a slot.
+    ///
+    /// `Challenge` doesn't carry an `issued_at` field, but every challenge in
+    /// a given store shares the same `ttl_secs`, so `expires_at` (which does
+    /// exist) sorts identically to issuance order: the smallest `expires_at`
+    /// is the oldest-issued challenge. Ties (identical `expires_at`) are
+    /// broken by nonce so eviction never depends on `DashMap` iteration
+    /// order.
+    ///
+    /// Best-effort under concurrency (as is the rest of this `DashMap`-backed
+    /// store): a race between the capacity check and this eviction can let
+    /// the store briefly exceed `max_challenges` by a small amount, which the
+    /// next `create` call self-corrects.
+    fn evict_oldest(&self) {
+        let victim = self
+            .challenges
+            .iter()
+            .min_by(|a, b| {
+                a.value()
+                    .expires_at
+                    .cmp(&b.value().expires_at)
+                    .then_with(|| a.key().cmp(b.key()))
+            })
+            .map(|e| e.key().clone());
+        if let Some(nonce) = victim {
+            self.challenges.remove(&nonce);
+        }
     }
 
     /// Validate and consume a challenge by nonce.
@@ -198,5 +272,92 @@ mod tests {
 
         store.cleanup_expired();
         assert_eq!(store.len(), 0);
+    }
+
+    // ── H2 hardening: bounded capacity ──────────────────────────────────
+
+    fn addr_did(byte: u8) -> String {
+        format!("did:pkh:eip155:1:0x{}", hex::encode([byte; 20]))
+    }
+
+    #[test]
+    fn default_cap_matches_max_challenges_const() {
+        let store = test_store();
+        assert_eq!(store.max_challenges, MAX_CHALLENGES);
+    }
+
+    #[test]
+    fn with_capacity_overrides_the_default_cap() {
+        // Long TTL so nothing expires mid-test.
+        let store = ChallengeStore::with_capacity(300, "aqua-node".into(), "http://x".into(), 3);
+        for i in 0..3u8 {
+            store.create(&addr_did(i)).unwrap();
+        }
+        assert_eq!(store.len(), 3);
+
+        // A 4th create must not grow the store past the cap.
+        store.create(&addr_did(9)).unwrap();
+        assert!(
+            store.len() <= 3,
+            "store must never exceed its configured capacity"
+        );
+    }
+
+    #[test]
+    fn cap_never_exceeded_across_many_creates() {
+        let store = ChallengeStore::with_capacity(300, "aqua-node".into(), "http://x".into(), 5);
+        for i in 0..50u8 {
+            store.create(&addr_did(i)).unwrap();
+            assert!(store.len() <= 5, "hard cap violated at iteration {i}");
+        }
+    }
+
+    #[test]
+    fn purge_expired_before_evicting_oldest() {
+        // 0-second TTL: every challenge is immediately expired, so hitting
+        // the cap must be resolved by purging (freeing all slots) rather
+        // than evicting a still-pending challenge — there are none left
+        // pending once real time has moved past their 1-second TTL.
+        let store = ChallengeStore::with_capacity(1, "aqua-node".into(), "http://x".into(), 2);
+        let a = store.create(&addr_did(1)).unwrap();
+        let _b = store.create(&addr_did(2)).unwrap();
+        assert_eq!(store.len(), 2);
+
+        // Let both prior challenges actually expire.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        // Both prior challenges are now expired: create() must purge them
+        // first, so a fresh 2-slot store ends up with just the new one
+        // (which is not yet expired: its own TTL starts now).
+        let c = store.create(&addr_did(3)).unwrap();
+        assert_eq!(
+            store.len(),
+            1,
+            "purge must reclaim expired slots before any eviction"
+        );
+        // The purge removed the expired entries outright — neither survives.
+        assert!(store.validate(&a.nonce).is_err());
+        assert!(store.validate(&c.nonce).is_ok());
+    }
+
+    #[test]
+    fn evicts_oldest_issued_when_still_full_after_purge() {
+        // Long TTL so purge finds nothing to reclaim; the only way to make
+        // room is evicting the oldest still-pending challenge.
+        let store = ChallengeStore::with_capacity(300, "aqua-node".into(), "http://x".into(), 2);
+        let first = store.create(&addr_did(1)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let second = store.create(&addr_did(2)).unwrap();
+        assert_eq!(store.len(), 2);
+
+        // Third create must evict the oldest (`first`), not `second`.
+        let third = store.create(&addr_did(3)).unwrap();
+        assert_eq!(store.len(), 2);
+        assert!(
+            store.validate(&first.nonce).is_err(),
+            "the oldest-issued challenge must be evicted"
+        );
+        assert!(store.validate(&second.nonce).is_ok());
+        assert!(store.validate(&third.nonce).is_ok());
     }
 }

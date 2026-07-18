@@ -69,8 +69,7 @@ where
     }
 
     // 2. Sign the message
-    let signature = sign_fn(&envelope.message)
-        .map_err(|e| AuthClientError::Sign(e.to_string()))?;
+    let signature = sign_fn(&envelope.message).map_err(|e| AuthClientError::Sign(e.to_string()))?;
 
     // 3. Exchange for session
     let session_url = format!("{base_url}/auth/session");

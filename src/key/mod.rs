@@ -4,11 +4,11 @@
 //! Encoding: `z` (base58btc multibase) + multicodec varint prefix + raw key bytes.
 
 use crate::{crypto_error::CryptoError, did_method::DIDMethod};
-use ed25519_dalek::{Signature as Ed25519Sig, Verifier, VerifyingKey as Ed25519Key};
 use ::p256::{
     ecdsa::{Signature as P256Sig, VerifyingKey as P256Key},
     EncodedPoint,
 };
+use ed25519_dalek::{Signature as Ed25519Sig, Verifier, VerifyingKey as Ed25519Key};
 
 /// Multicodec varint for Ed25519 public key (0xED01).
 pub(crate) const ED25519_PREFIX: &[u8] = &[0xED, 0x01];
@@ -143,8 +143,8 @@ impl DIDMethod for KeyMethod {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey as Ed25519SigningKey};
     use ::p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
+    use ed25519_dalek::{Signer, SigningKey as Ed25519SigningKey};
     use rand::rngs::OsRng;
 
     pub(super) fn ed25519_did(key: &Ed25519SigningKey) -> String {

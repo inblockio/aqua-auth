@@ -106,7 +106,8 @@ mod tests {
     /// break the client. Serde ignores unknown fields by default.
     #[test]
     fn challenge_envelope_tolerates_extra_did_field() {
-        let raw = r#"{"did":"did:pkh:eip155:1:0xABCD","nonce":"0xabc","message":"hi","expires_at":1}"#;
+        let raw =
+            r#"{"did":"did:pkh:eip155:1:0xABCD","nonce":"0xabc","message":"hi","expires_at":1}"#;
         let env: ChallengeEnvelope = serde_json::from_str(raw).unwrap();
         assert_eq!(env.nonce, "0xabc");
         assert_eq!(env.expires_at, 1);

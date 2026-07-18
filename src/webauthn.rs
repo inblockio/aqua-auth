@@ -60,19 +60,15 @@ pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<boo
     }
 
     // 4. Parse clientDataJSON
-    let client_data: serde_json::Value =
-        serde_json::from_slice(params.client_data_json).map_err(|e| {
-            CryptoError::InvalidSignature(format!("invalid clientDataJSON: {}", e))
-        })?;
+    let client_data: serde_json::Value = serde_json::from_slice(params.client_data_json)
+        .map_err(|e| CryptoError::InvalidSignature(format!("invalid clientDataJSON: {}", e)))?;
 
     // 5. Verify type == "webauthn.get"
     let cd_type = client_data
         .get("type")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            CryptoError::InvalidSignature(
-                "clientDataJSON missing 'type' field".to_string(),
-            )
+            CryptoError::InvalidSignature("clientDataJSON missing 'type' field".to_string())
         })?;
     if cd_type != "webauthn.get" {
         return Err(CryptoError::InvalidSignature(format!(
@@ -86,9 +82,7 @@ pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<boo
         .get("challenge")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            CryptoError::InvalidSignature(
-                "clientDataJSON missing 'challenge' field".to_string(),
-            )
+            CryptoError::InvalidSignature("clientDataJSON missing 'challenge' field".to_string())
         })?;
     let decoded_challenge = URL_SAFE_NO_PAD.decode(cd_challenge).map_err(|e| {
         CryptoError::InvalidSignature(format!("invalid base64url challenge: {}", e))
@@ -104,9 +98,7 @@ pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<boo
         .get("origin")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            CryptoError::InvalidSignature(
-                "clientDataJSON missing 'origin' field".to_string(),
-            )
+            CryptoError::InvalidSignature("clientDataJSON missing 'origin' field".to_string())
         })?;
     if cd_origin != params.expected_origin {
         return Err(CryptoError::InvalidSignature(format!(
@@ -133,13 +125,11 @@ pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<boo
     let encoded_point = EncodedPoint::from_bytes(params.credential_public_key).map_err(|e| {
         CryptoError::InvalidSignature(format!("invalid public key encoding: {}", e))
     })?;
-    let verifying_key = VerifyingKey::from_encoded_point(&encoded_point).map_err(|e| {
-        CryptoError::InvalidSignature(format!("invalid P-256 public key: {}", e))
-    })?;
+    let verifying_key = VerifyingKey::from_encoded_point(&encoded_point)
+        .map_err(|e| CryptoError::InvalidSignature(format!("invalid P-256 public key: {}", e)))?;
 
-    let signature = Signature::from_bytes(params.signature.into()).map_err(|e| {
-        CryptoError::InvalidSignature(format!("invalid signature encoding: {}", e))
-    })?;
+    let signature = Signature::from_bytes(params.signature.into())
+        .map_err(|e| CryptoError::InvalidSignature(format!("invalid signature encoding: {}", e)))?;
 
     match verifying_key.verify(&signed_payload, &signature) {
         Ok(()) => Ok(true),
