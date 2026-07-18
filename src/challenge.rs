@@ -182,7 +182,7 @@ mod tests {
         assert!(challenge.message.contains("P-256 account"));
         assert!(!challenge.message.contains("Chain ID"));
 
-        use p256::ecdsa::Signer;
+        use p256::ecdsa::signature::Signer;
         let sig: p256::ecdsa::Signature = key.sign(challenge.message.as_bytes());
         assert!(crate::verify_caip122(&did, &challenge.message, &sig.to_bytes()).unwrap());
     }
