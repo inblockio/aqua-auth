@@ -57,12 +57,33 @@ let stored = challenges.validate(&nonce)?;
 assert_eq!(stored.did, did);
 let sig_bytes = hex::decode(signature.trim_start_matches("0x"))?;
 if verify_caip122(&did, &stored.message, &sig_bytes)? {
-    let session = sessions.create(&did);
+    // `create` can fail if the session store is at its hard capacity (see
+    // "Bounded stores" below); map an `Err` to an HTTP 503, not a panic.
+    let session = sessions.create(&did)?;
     // return SessionResponse { did, token, valid_until, created_at }
 }
 ```
 
 The `ChallengeStore` and `SessionStore` are in-memory by default with TTL-based cleanup. For multi-instance deployments, plug in your own store implementation; the verifier dispatch (`verify_caip122`) is independent of state.
+
+### Bounded stores, revocation
+
+Both stores carry a hard capacity so neither grows without bound under a flood:
+
+```rust
+use aqua_auth::{ChallengeStore, SessionStore};
+
+// Defaults: MAX_CHALLENGES = 8192, MAX_SESSIONS = 8192, MAX_SESSIONS_PER_DID = 32.
+let challenges = ChallengeStore::new(300, domain, uri); // same as with_capacity(.., MAX_CHALLENGES)
+let sessions = SessionStore::new(3600);                 // same as with_capacity(.., MAX_SESSIONS, MAX_SESSIONS_PER_DID)
+
+// Override either cap explicitly:
+let sessions = SessionStore::with_capacity(3600, /* max_sessions */ 4096, /* max_sessions_per_did */ 16);
+```
+
+- `ChallengeStore::create` purges expired challenges first; if still at capacity it evicts the single oldest-issued challenge (challenges are pre-auth and short-TTL, so this only inconveniences whoever is flooding the endpoint).
+- `SessionStore::create` purges expired sessions first; if still at capacity it returns `Err(AuthError::SessionStoreFull)` rather than evicting an active session. Independently, a single DID minting beyond its own `MAX_SESSIONS_PER_DID` quota has its own oldest session evicted, bounding per-identity session farming without touching other identities.
+- `SessionStore::revoke(token) -> bool` and `SessionStore::revoke_all_for_did(did) -> usize` revoke sessions outright; a revoked token fails `validate` immediately via the same path as an unknown token. Use these to back a `/auth/logout` endpoint.
 
 ## Wire contract
 
