@@ -20,11 +20,19 @@ Intended for publication on **crates.io** as the default auth crate for the Aqua
 
 Three DID namespaces via `CipherSuite` and `DIDMethod` trait registries:
 
-| Namespace | DID Format | Verifier |
+| Namespace | Accepted login DID formats | Verifier |
 |---|---|---|
 | `eip155` | `did:pkh:eip155:1:0x{address}` | EIP-191 ecrecover (secp256k1) |
-| `ed25519` | `did:pkh:ed25519:0x{pubkey}` / `did:key:z6Mk...` | ed25519-dalek |
-| `p256` | `did:pkh:p256:0x{compressed}` / `did:key:zDn...` | P-256 ECDSA |
+| `ed25519` | `did:key:z6Mk...` **and** `did:pkh:ed25519:0x{pubkey}` | ed25519-dalek |
+| `p256` | `did:key:zDn...` **and** `did:pkh:p256:0x{compressed}` | P-256 ECDSA |
+
+**Two spellings, two principals — deliberate (#182, ruled 2026-08-06).** An ed25519/P-256
+key may log in as either its `did:key` form or its `did:pkh:{ed25519,p256}` form; **both are
+accepted**, and they are **distinct principals** — `canonical_trust_key` keys them separately,
+so each spelling has its own grant bucket. A key that uses both spellings therefore holds two
+independent identities. This is intentional: they are NOT folded to one principal. (Considered
+and rejected: A-strict, reject the did:pkh spelling; and B-fold, canonicalise it to did:key.
+The ruling is to accept both as-is — see task #182 / `plans/backend-unification/25`.)
 
 Additionally, `did:peer` (variants 0 and 2) is supported for DID resolution.
 
