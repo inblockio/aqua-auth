@@ -46,14 +46,22 @@ are generated and stored. The Aqua extension specifies all of these.
 
 ## 3. Supported DID Namespaces
 
-All DIDs in this system use the `did:pkh` method. The namespace segment
-determines which signature algorithm applies.
+EVM identities use the `did:pkh` method. ed25519/P-256 identities are accepted in
+**both** their `did:key` form (W3C standard) **and** their `did:pkh:{ed25519,p256}`
+form. The namespace/curve determines which signature algorithm applies.
 
-| Namespace | DID shape | Identifier in message | Signature scheme | Status |
+| Namespace | Accepted login DID shapes | Identifier in message | Signature scheme | Status |
 |---|---|---|---|---|
 | `eip155` | `did:pkh:eip155:<chain_id>:0x<eip55_address>` | EIP-55 checksummed 20-byte address | EIP-191 `personal_sign` over canonical message string | CAIP-122 compliant |
-| `ed25519` | `did:pkh:ed25519:0x<32-byte pubkey hex>` | raw 32-byte Ed25519 public key, hex with `0x` prefix | Ed25519 over raw message bytes (no prefix) | Aqua extension |
-| `p256` | `did:pkh:p256:0x<33-byte compressed pubkey hex>` | compressed 33-byte P-256 public key, hex with `0x` prefix | P-256 ECDSA over raw message bytes (no prefix) | Aqua extension |
+| `ed25519` | `did:key:z6Mk<multibase>` or `did:pkh:ed25519:0x<32-byte pubkey hex>` | multibase key (`did:key`) or raw 32-byte pubkey hex (`did:pkh`) | Ed25519 over raw message bytes (no prefix) | Aqua extension |
+| `p256` | `did:key:zDn<multibase>` or `did:pkh:p256:0x<33-byte compressed pubkey hex>` | multibase key (`did:key`) or compressed 33-byte pubkey hex (`did:pkh`) | P-256 ECDSA over raw message bytes (no prefix) | Aqua extension |
+
+> **Two spellings, two principals (#182).** For ed25519/P-256, the `did:key` and
+> `did:pkh` forms of one key are **both accepted** and are **distinct principals** —
+> `canonical_trust_key` keys them into separate grant buckets. Switching login spelling
+> returns a different resource set by design. A "my files disappeared" report after a
+> login-method change is this behaviour (a different principal), not a defect — do not
+> re-open #182.
 
 **`eip155` DID parsing** (see `src/did.rs`):
 
