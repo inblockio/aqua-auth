@@ -24,6 +24,7 @@ pub mod did_method;
 pub mod key;
 pub mod peer;
 pub mod pkh;
+pub mod principal;
 
 pub use cipher_suite::{all_cipher_suites, find_cipher_suite, CipherSuite};
 pub use crypto_error::CryptoError;
@@ -36,6 +37,7 @@ pub use did_method::{all_did_methods, find_did_method, DIDMethod};
 pub use key::{Ed25519Suite, KeyMethod, P256Suite};
 pub use peer::PeerMethod;
 pub use pkh::{Eip155Suite, PkhMethod};
+pub use principal::{authenticate, Principal};
 
 // --- Behind `http` feature (session/auth layer) ---
 #[cfg(feature = "http")]
