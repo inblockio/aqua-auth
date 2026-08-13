@@ -49,6 +49,8 @@ pub mod message;
 #[cfg(feature = "http")]
 pub mod session;
 #[cfg(feature = "http")]
+pub mod session_backend;
+#[cfg(feature = "http")]
 pub mod types;
 #[cfg(feature = "http")]
 pub mod wire;
@@ -61,6 +63,8 @@ pub use challenge::ChallengeStore;
 pub use message::{build_message, MessageParams};
 #[cfg(feature = "http")]
 pub use session::SessionStore;
+#[cfg(feature = "http")]
+pub use session_backend::{InMemoryBackend, SessionBackend};
 #[cfg(feature = "http")]
 pub use types::{AuthenticatedDid, Challenge, Session, SessionInfo};
 #[cfg(feature = "http")]
