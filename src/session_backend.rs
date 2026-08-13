@@ -112,6 +112,7 @@ impl SessionBackend for InMemoryBackend {
 /// Selects which [`SessionBackend`] implementation [`build_backend`] should
 /// construct, so a consumer can pick a backend from config (e.g. a string
 /// read from a TOML/env value) without branching on cargo features itself.
+#[non_exhaustive]
 pub enum SessionBackendKind {
     /// [`InMemoryBackend`]. Always available, in every feature configuration.
     Memory,

@@ -215,7 +215,9 @@ impl SessionStore {
         self.backend.len() as u32
     }
 
-    /// Remove all expired sessions.
+    /// Remove all expired sessions. Best-effort under concurrency: a session
+    /// created between this call's snapshot and its removal pass is simply
+    /// swept on the next cycle.
     pub fn cleanup_expired(&self) {
         let now = Utc::now().timestamp() as u64;
         for s in self.backend.all() {

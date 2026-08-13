@@ -2,6 +2,7 @@ use crate::crypto_error::CryptoError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AuthError {
     #[error(transparent)]
     Crypto(#[from] CryptoError),
