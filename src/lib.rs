@@ -64,7 +64,7 @@ pub use message::{build_message, MessageParams};
 #[cfg(feature = "http")]
 pub use session::SessionStore;
 #[cfg(feature = "http")]
-pub use session_backend::{InMemoryBackend, SessionBackend};
+pub use session_backend::{build_backend, InMemoryBackend, SessionBackend, SessionBackendKind};
 #[cfg(feature = "http")]
 pub use types::{AuthenticatedDid, Challenge, Session, SessionInfo};
 #[cfg(feature = "http")]

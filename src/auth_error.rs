@@ -25,6 +25,15 @@ pub enum AuthError {
     #[error("session store at capacity ({max} sessions); new session rejected")]
     SessionStoreFull { max: usize },
 
+    /// [`crate::session_backend::build_backend`] was asked for a
+    /// [`crate::session_backend::SessionBackendKind`] whose implementation
+    /// requires a cargo feature that is not compiled in (e.g.
+    /// `SessionBackendKind::Redis` without the `redis` feature). Always
+    /// available (not feature-gated) so `build_backend` compiles and returns
+    /// this in both configurations.
+    #[error("session backend unavailable: {0}")]
+    BackendUnavailable(String),
+
     /// [`crate::redis_backend::RedisBackend`] (feature `redis`) failed to
     /// connect to or communicate with Redis.
     #[cfg(feature = "redis")]
