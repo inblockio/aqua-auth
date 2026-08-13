@@ -24,4 +24,16 @@ pub enum AuthError {
     /// rather than evicting an active, authenticated session.
     #[error("session store at capacity ({max} sessions); new session rejected")]
     SessionStoreFull { max: usize },
+
+    /// [`crate::redis_backend::RedisBackend`] (feature `redis`) failed to
+    /// connect to or communicate with Redis.
+    #[cfg(feature = "redis")]
+    #[error("redis error: {0}")]
+    Redis(#[from] redis::RedisError),
+
+    /// [`crate::redis_backend::RedisBackend`] (feature `redis`) failed to
+    /// (de)serialize a [`crate::types::Session`] to/from JSON.
+    #[cfg(feature = "redis")]
+    #[error("session (de)serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
 }
