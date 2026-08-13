@@ -27,9 +27,9 @@
 
 use crate::auth_error::AuthError;
 use crate::challenge::ChallengeStore;
+use crate::session_backend::{InMemoryBackend, SessionBackend};
 use crate::types::{Session, SessionInfo};
 use chrono::Utc;
-use dashmap::DashMap;
 use rand::Rng;
 use std::sync::Arc;
 
@@ -49,8 +49,8 @@ pub const MAX_SESSIONS_PER_DID: usize = 32;
 
 /// In-memory store for authenticated sessions.
 pub struct SessionStore {
-    /// Sessions keyed by token.
-    sessions: DashMap<String, Session>,
+    /// Pluggable storage backend (see [`crate::session_backend::SessionBackend`]).
+    backend: Arc<dyn SessionBackend>,
     /// Session time-to-live in seconds.
     ttl_secs: u64,
     /// Global hard cap (see [`MAX_SESSIONS`]).
@@ -71,8 +71,25 @@ impl SessionStore {
     /// Same as [`Self::new`], but with explicit hard caps overriding
     /// [`MAX_SESSIONS`] and [`MAX_SESSIONS_PER_DID`].
     pub fn with_capacity(ttl_secs: u64, max_sessions: usize, max_sessions_per_did: usize) -> Self {
+        Self::with_backend(
+            ttl_secs,
+            max_sessions,
+            max_sessions_per_did,
+            Arc::new(InMemoryBackend::new()),
+        )
+    }
+
+    /// Same as [`Self::with_capacity`], but with an explicit
+    /// [`SessionBackend`] implementation for storage (e.g. Redis) instead of
+    /// the default in-memory one.
+    pub fn with_backend(
+        ttl_secs: u64,
+        max_sessions: usize,
+        max_sessions_per_did: usize,
+        backend: Arc<dyn SessionBackend>,
+    ) -> Self {
         Self {
-            sessions: DashMap::new(),
+            backend,
             ttl_secs,
             max_sessions,
             max_sessions_per_did,
@@ -90,9 +107,9 @@ impl SessionStore {
     /// `max_sessions_per_did` sessions, its own oldest session is evicted to
     /// make room for the new one (bounds per-identity session farming).
     pub fn create(&self, did: &str) -> Result<Session, AuthError> {
-        if self.sessions.len() >= self.max_sessions {
+        if self.backend.len() >= self.max_sessions {
             self.cleanup_expired();
-            if self.sessions.len() >= self.max_sessions {
+            if self.backend.len() >= self.max_sessions {
                 tracing::error!(
                     max = self.max_sessions,
                     did,
@@ -118,7 +135,7 @@ impl SessionStore {
             created_at: now,
         };
 
-        self.sessions.insert(token, session.clone());
+        self.backend.insert(session.clone())?;
         Ok(session)
     }
 
@@ -128,10 +145,11 @@ impl SessionStore {
     /// sessions — only bounds a single identity's own session count.
     fn enforce_per_did_cap(&self, did: &str) {
         let mut this_did: Vec<(String, u64)> = self
-            .sessions
-            .iter()
-            .filter(|e| e.value().did == did)
-            .map(|e| (e.key().clone(), e.value().created_at))
+            .backend
+            .all()
+            .into_iter()
+            .filter(|s| s.did == did)
+            .map(|s| (s.token, s.created_at))
             .collect();
         if this_did.len() < self.max_sessions_per_did {
             return;
@@ -143,7 +161,7 @@ impl SessionStore {
                 max_per_did = self.max_sessions_per_did,
                 "per-DID session cap reached; evicting oldest session for this DID"
             );
-            self.sessions.remove(oldest_token);
+            self.backend.remove(oldest_token);
         }
     }
 
@@ -152,29 +170,25 @@ impl SessionStore {
     /// fails `validate` immediately afterward (same path as an unknown
     /// token, since revocation removes the entry outright).
     pub fn revoke(&self, token: &str) -> bool {
-        self.sessions.remove(token).is_some()
+        self.backend.remove(token)
     }
 
     /// Revoke every active session belonging to `did`. Returns the number of
     /// sessions removed. Best-effort under concurrency: a session created by
     /// `did` concurrently with this call may or may not be included, same as
-    /// the rest of this `DashMap`-backed store's other bulk operations
-    /// (`cleanup_expired`).
+    /// the rest of this store's other bulk operations (`cleanup_expired`).
     pub fn revoke_all_for_did(&self, did: &str) -> usize {
-        let before = self.sessions.len();
-        self.sessions.retain(|_, s| s.did != did);
-        before - self.sessions.len()
+        self.backend.remove_all_for_did(did)
     }
 
     /// Validate a session token. Returns the associated DID if valid.
     pub fn validate(&self, token: &str) -> Result<String, AuthError> {
-        let session = self.sessions.get(token).ok_or(AuthError::SessionNotFound)?;
+        let session = self.backend.get(token).ok_or(AuthError::SessionNotFound)?;
 
         let now = Utc::now().timestamp() as u64;
         if now >= session.valid_until {
             // Remove expired session
-            drop(session);
-            self.sessions.remove(token);
+            self.backend.remove(token);
             return Err(AuthError::SessionExpired);
         }
 
@@ -184,29 +198,31 @@ impl SessionStore {
     /// List all active (non-expired) sessions.
     pub fn list_sessions(&self) -> Vec<SessionInfo> {
         let now = Utc::now().timestamp() as u64;
-        self.sessions
-            .iter()
-            .filter(|entry| entry.value().valid_until > now)
-            .map(|entry| {
-                let s = entry.value();
-                SessionInfo {
-                    did: s.did.clone(),
-                    created_at: s.created_at,
-                    valid_until: s.valid_until,
-                }
+        self.backend
+            .all()
+            .into_iter()
+            .filter(|s| s.valid_until > now)
+            .map(|s| SessionInfo {
+                did: s.did,
+                created_at: s.created_at,
+                valid_until: s.valid_until,
             })
             .collect()
     }
 
     /// Number of active sessions (including possibly expired ones not yet cleaned up).
     pub fn active_count(&self) -> u32 {
-        self.sessions.len() as u32
+        self.backend.len() as u32
     }
 
     /// Remove all expired sessions.
     pub fn cleanup_expired(&self) {
         let now = Utc::now().timestamp() as u64;
-        self.sessions.retain(|_, s| s.valid_until > now);
+        for s in self.backend.all() {
+            if s.valid_until <= now {
+                self.backend.remove(&s.token);
+            }
+        }
     }
 
     /// Start a background task that periodically cleans up expired sessions
@@ -385,6 +401,18 @@ mod tests {
     fn revoke_unknown_token_returns_false() {
         let store = SessionStore::new(3600);
         assert!(!store.revoke("nonexistent"));
+    }
+
+    #[test]
+    fn store_with_explicit_backend_roundtrips() {
+        let store = SessionStore::with_backend(
+            3600,
+            8192,
+            32,
+            Arc::new(crate::session_backend::InMemoryBackend::new()),
+        );
+        let s = store.create("did:pkh:eip155:1:0xabc").unwrap();
+        assert_eq!(store.validate(&s.token).unwrap(), "did:pkh:eip155:1:0xabc");
     }
 
     #[test]

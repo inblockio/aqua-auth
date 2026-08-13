@@ -37,6 +37,11 @@ pub trait SessionBackend: Send + Sync {
 
     /// The number of currently stored sessions.
     fn len(&self) -> usize;
+
+    /// Whether the backend currently holds no sessions.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// In-memory [`SessionBackend`] backed by a [`DashMap`].
