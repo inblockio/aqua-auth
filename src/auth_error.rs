@@ -36,4 +36,13 @@ pub enum AuthError {
     #[cfg(feature = "redis")]
     #[error("session (de)serialization error: {0}")]
     Serde(#[from] serde_json::Error),
+
+    /// [`crate::redis_backend::RedisBackend`] (feature `redis`) found its
+    /// internal connection mutex poisoned by a prior panic on another
+    /// thread. Read methods degrade to their safe default instead of
+    /// surfacing this (see the trait's infallible signatures); `insert` is
+    /// the one fallible method, so it reports this explicitly.
+    #[cfg(feature = "redis")]
+    #[error("redis backend: connection lock poisoned by a prior panic")]
+    LockPoisoned,
 }
