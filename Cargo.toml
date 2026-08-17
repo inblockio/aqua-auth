@@ -12,6 +12,10 @@ default = []
 http = ["dep:rand", "dep:serde_json", "dep:chrono", "dep:dashmap", "dep:tokio", "dep:tracing"]
 client = ["http", "dep:reqwest"]
 webauthn = ["dep:sha2", "dep:base64", "dep:serde_json"]
+# `ceremony` adds the register/login WebAuthn ceremony over webauthn-rs. Kept
+# separate from `webauthn` so consumers that only VERIFY assertions (the light
+# path) don't pull the heavy webauthn-rs stack.
+ceremony = ["webauthn", "dep:webauthn-rs", "dep:uuid"]
 redis = ["dep:redis", "http"]
 
 [dependencies]
@@ -40,6 +44,12 @@ tracing = { version = "0.1", optional = true }
 # Behind `webauthn` feature
 sha2 = { version = "0.10", optional = true }
 base64 = { version = "0.21", optional = true }
+
+# Behind `ceremony` feature. Pinned to the EXACT version aqua-node/aquafier use
+# so the serialized `Passkey` blob (feature `danger-allow-state-serialisation`)
+# is byte-compatible across all consumers of the shared credential store.
+webauthn-rs = { version = "=0.6.1-dev", features = ["danger-allow-state-serialisation"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 # Behind `client` feature
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }

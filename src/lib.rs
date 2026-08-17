@@ -102,6 +102,17 @@ pub mod redis_webauthn;
 #[cfg(all(feature = "webauthn", feature = "redis"))]
 pub use redis_webauthn::RedisWebauthnStore;
 
+// --- Behind `ceremony` feature (register/login over webauthn-rs) ---
+#[cfg(feature = "ceremony")]
+pub mod webauthn_ceremony;
+#[cfg(feature = "ceremony")]
+pub use webauthn_ceremony::{
+    build_webauthn, did_key_from_p256_compressed, login_finish, login_start,
+    p256_compressed_from_passkey, p256_compressed_from_passkey_blob, passkey_from_blob,
+    register_finish, register_start, user_handle_for, CeremonyError, FinishedLogin,
+    FinishedRegistration, RegisterMode, StartedRegistration, WebauthnConfig,
+};
+
 /// Verify a CAIP-122 session signature.
 ///
 /// Dispatches to the DIDMethod registry (did:pkh, did:key, did:peer).
