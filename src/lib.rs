@@ -86,6 +86,22 @@ pub mod webauthn;
 #[cfg(feature = "webauthn")]
 pub use webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
 
+// Credential store (the persistence half of passkey support). The trait +
+// in-memory backend need no `redis`; the Redis backend adds it.
+#[cfg(feature = "webauthn")]
+pub mod webauthn_store;
+#[cfg(feature = "webauthn")]
+pub use webauthn_store::{
+    CredentialId, InMemoryWebauthnStore, NewCredential, StoredCredential,
+    WebauthnCredentialBackend, WebauthnStoreError,
+};
+
+// --- Behind `webauthn` + `redis` features ---
+#[cfg(all(feature = "webauthn", feature = "redis"))]
+pub mod redis_webauthn;
+#[cfg(all(feature = "webauthn", feature = "redis"))]
+pub use redis_webauthn::RedisWebauthnStore;
+
 /// Verify a CAIP-122 session signature.
 ///
 /// Dispatches to the DIDMethod registry (did:pkh, did:key, did:peer).
