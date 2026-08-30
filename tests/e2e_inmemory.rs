@@ -51,15 +51,12 @@ fn get(path: &str) -> axum::http::request::Builder {
         .header(header::HOST, AUTHORITY)
 }
 
-async fn body_bytes(response: Response<Body>) -> Vec<u8> {
-    axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("response body must be readable")
-        .to_vec()
-}
-
+/// Decode a response body, printing it verbatim when it is not the shape the
+/// test expected, so a 4xx caught by the wrong assertion names itself.
 async fn body_json<T: serde::de::DeserializeOwned>(response: Response<Body>) -> T {
-    let bytes = body_bytes(response).await;
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body must be readable");
     serde_json::from_slice(&bytes).unwrap_or_else(|e| {
         panic!(
             "body was not the expected JSON shape ({e}): {}",
@@ -77,7 +74,11 @@ async fn fetch_challenge(peer: &AquaPeer, did: &str) -> ChallengeEnvelope {
             .unwrap(),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::OK, "challenge request failed");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "challenge request failed"
+    );
     body_json(response).await
 }
 
@@ -112,7 +113,10 @@ async fn whoami(peer: &AquaPeer, token: &str) -> Response<Body> {
 /// The full login flow for one signer: challenge, sign, session, `/whoami`.
 async fn login(peer: &AquaPeer, signer: &dyn Signer) -> SessionResponse {
     let envelope = fetch_challenge(peer, signer.signer_did()).await;
-    let signature = signer.sign(&envelope.message).await.expect("signing failed");
+    let signature = signer
+        .sign(&envelope.message)
+        .await
+        .expect("signing failed");
 
     let response = post_session(
         peer,
@@ -382,11 +386,7 @@ async fn sign_sig_whoami(signer: &dyn Signer, authority: &str) -> SignedHeaders 
 
 /// Present already-minted signature headers under an arbitrary `Host`, which is
 /// what lets the tampered-authority case exist at all.
-async fn send_signed(
-    peer: &AquaPeer,
-    headers: &SignedHeaders,
-    host: &str,
-) -> Response<Body> {
+async fn send_signed(peer: &AquaPeer, headers: &SignedHeaders, host: &str) -> Response<Body> {
     send(
         peer,
         Request::builder()
@@ -506,7 +506,11 @@ async fn the_jwks_directory_is_served_with_the_drafts_media_type_and_kid() {
     );
     let body: serde_json::Value = body_json(response).await;
 
-    let advertised = peer.registry.keys().first().expect("peer advertises itself");
+    let advertised = peer
+        .registry
+        .keys()
+        .first()
+        .expect("peer advertises itself");
     assert_eq!(advertised.did, signer.signer_did());
     assert_eq!(body["keys"][0]["kid"], advertised.thumbprint().unwrap());
     assert_eq!(body["keys"][0]["kty"], "OKP");
@@ -528,7 +532,11 @@ async fn the_aqua_identity_document_names_the_peers_did() {
     assert_eq!(content_type(&response), "application/json");
     let body: serde_json::Value = body_json(response).await;
 
-    let advertised = peer.registry.keys().first().expect("peer advertises itself");
+    let advertised = peer
+        .registry
+        .keys()
+        .first()
+        .expect("peer advertises itself");
     assert_eq!(body["version"], 1);
     assert_eq!(body["dids"][0], signer.signer_did());
     assert_eq!(

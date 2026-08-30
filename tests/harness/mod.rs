@@ -34,8 +34,8 @@ use aqua_auth::http_sig::{NonceReplayGuard, RequestParts, VerifyOptions};
 use aqua_auth::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 use aqua_auth::{authenticate, AuthError, ChallengeStore, SessionStore, Signer};
 use aqua_auth_directory::{
-    render_aqua_identity, render_jwks, AdvertisedKey, DirectoryDocument, KeyRegistry,
-    WELL_KNOWN_AQUA_IDENTITY, WELL_KNOWN_HTTP_MESSAGE_SIGNATURES,
+    render_aqua_identity, render_jwks, AdvertisedKey, DirectoryDocument, DirectoryError,
+    KeyRegistry, WELL_KNOWN_AQUA_IDENTITY, WELL_KNOWN_HTTP_MESSAGE_SIGNATURES,
 };
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, Method, StatusCode, Uri};
@@ -322,12 +322,15 @@ async fn sig_whoami_handler(
         .ok_or(StatusCode::BAD_REQUEST)?;
     let target_uri = format!("{}://{}{}", state.scheme, authority, uri.path());
 
-    let signature_input = header_str(&headers, "signature-input").ok_or(StatusCode::UNAUTHORIZED)?;
+    let signature_input =
+        header_str(&headers, "signature-input").ok_or(StatusCode::UNAUTHORIZED)?;
     let signature = header_str(&headers, "signature").ok_or(StatusCode::UNAUTHORIZED)?;
 
+    // `signature-agent` is covered by the signature whenever the request
+    // carries it, so it has to be fed in from the request too, not assumed
+    // absent.
     let mut parts = RequestParts::new(method.as_str(), &target_uri);
-    let signature_agent = header_str(&headers, "signature-agent");
-    if let Some(agent) = signature_agent {
+    if let Some(agent) = header_str(&headers, "signature-agent") {
         parts = parts.with_signature_agent(agent);
     }
 
@@ -350,7 +353,9 @@ async fn aqua_identity_handler(State(state): State<PeerState>) -> Result<Respons
 
 /// Serve a rendered directory document with the content type and cache
 /// directive the renderer chose. The renderer owns those, not the router.
-fn serve_document<E>(document: Result<DirectoryDocument, E>) -> Result<Response, StatusCode> {
+fn serve_document(
+    document: Result<DirectoryDocument, DirectoryError>,
+) -> Result<Response, StatusCode> {
     let document = document.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((
         [
