@@ -138,3 +138,13 @@ First steps: `git merge main`; confirm the harness exists; then WebFetch the pin
 - Spec coverage: phases 1 (A+B+C) and 2 (D) in-repo; commerce framework explicitly excluded (elon deletion, owned by the agentic-commerce effort).
 - The `/sig/whoami` authority detail is the known sharp edge: the signed `@authority` must equal what the server derives from the Host header; the in-memory suite controls the Host header explicitly, which is why the tampered-authority test lives there.
 - Type consistency: harness names (`AquaPeer`, `in_memory`, `bind_loopback`, `router`) are used identically in B, C, D.
+
+---
+
+## Discovered During Execution (audit errata)
+
+1. **Spent nonce reads as 404, not 401** (wave 1): `ChallengeStore::validate` removes the nonce, so "already used" and "never issued" are indistinguishable by design, and answering 401 would leak spent-versus-unknown. Task D's duplicate-delivery expectation was corrected to one 200 + one 404 before execution.
+2. **turmoil 0.7.2 API drift vs docs**: the seed method is `Builder::rng_seed(u64)`; `fixed_seed` (mentioned in a docs.rs summary) does not exist. Glue pinned to the `v0.7.2` axum example; no hyper/hyper-util dev-dependency needed.
+3. **Host-header requirement is narrower than assumed**: hyper serves the token routes without `Host`; only the authority-derived signature route 400s. The DST client still sends it (HTTP/1.1 conformance).
+4. **One transient lib-test failure** was observed once during the Task C merge under parallel turmoil compilation load (246/247), did not reproduce across four subsequent runs, and its name was lost to an output pipe. Follow-up: CI should run `--no-fail-fast` with captured output; orchestrator pipelines must gate on `PIPESTATUS[0]`, not the pipe tail.
+5. **Partition semantics**: turmoil partitions drop packets silently rather than refusing connections, so the heal scenario bounds each attempt with a simulated-time timeout instead of relying on connection errors.
