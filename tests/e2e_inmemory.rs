@@ -17,6 +17,7 @@
 
 mod harness;
 
+use aqua_auth::http_sig::{sign_request, Profile, RequestParts, SignedHeaders};
 use aqua_auth::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 use aqua_auth::Signer;
 use axum::body::Body;
@@ -354,4 +355,116 @@ async fn a_challenge_request_with_no_did_is_refused() {
 
     let response = send(&peer, get("/auth/challenge").body(Body::empty()).unwrap()).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// ── RFC 9421 request signatures, over the wire ──────────────────────────
+//
+// No challenge round trip and no bearer token: the request carries its own
+// proof. The sharp edge is `@authority`: the client signs the authority it
+// dialed, the server re-derives it from the `Host` header, and the two have to
+// agree or the rebuilt signature base is a different string.
+
+const SIG_TARGET: &str = "/sig/whoami";
+
+/// The two header values for a signed GET of `SIG_TARGET` at `authority`.
+async fn sign_sig_whoami(signer: &dyn Signer, authority: &str) -> SignedHeaders {
+    let target_uri = format!("http://{authority}{SIG_TARGET}");
+    sign_request(
+        signer,
+        &RequestParts::new("GET", &target_uri),
+        &Profile::AquaInternal,
+        std::time::Duration::from_secs(300),
+    )
+    .await
+    .expect("signing a well-formed request must succeed")
+}
+
+/// Present already-minted signature headers under an arbitrary `Host`, which is
+/// what lets the tampered-authority case exist at all.
+async fn send_signed(
+    peer: &AquaPeer,
+    headers: &SignedHeaders,
+    host: &str,
+) -> Response<Body> {
+    send(
+        peer,
+        Request::builder()
+            .method("GET")
+            .uri(SIG_TARGET)
+            .header(header::HOST, host)
+            .header("signature-input", &headers.signature_input)
+            .header("signature", &headers.signature)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_signed_request_authenticates_with_no_session_at_all() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let headers = sign_sig_whoami(&*signer, AUTHORITY).await;
+    let response = send_signed(&peer, &headers, AUTHORITY).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let who: serde_json::Value = body_json(response).await;
+    assert_eq!(who["did"], signer.signer_did());
+}
+
+#[tokio::test]
+async fn eip155_signs_requests_too() {
+    // The Aqua-internal profile is not Ed25519-only; only the web-bot-auth
+    // interop profile is.
+    let signer = signers::eip155();
+    let peer = peer(signer.clone());
+
+    let headers = sign_sig_whoami(&*signer, AUTHORITY).await;
+    let response = send_signed(&peer, &headers, AUTHORITY).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let who: serde_json::Value = body_json(response).await;
+    assert_eq!(who["did"], signer.signer_did());
+}
+
+#[tokio::test]
+async fn a_captured_signed_request_cannot_be_replayed() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let headers = sign_sig_whoami(&*signer, AUTHORITY).await;
+    assert_eq!(
+        send_signed(&peer, &headers, AUTHORITY).await.status(),
+        StatusCode::OK
+    );
+
+    // Byte-identical, still inside its validity window, and still refused: the
+    // nonce guard is what closes the window between `created` and `expires`.
+    assert_eq!(
+        send_signed(&peer, &headers, AUTHORITY).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn a_signature_minted_for_another_host_does_not_verify_here() {
+    // Signed for peer-a.test, presented with a Host of evil.test. The server
+    // trusts the request it received, not the parameters it was handed, so it
+    // rebuilds the base over "evil.test" and the signature falls apart.
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let headers = sign_sig_whoami(&*signer, AUTHORITY).await;
+    let response = send_signed(&peer, &headers, "evil.test").await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn an_unsigned_request_to_the_signed_endpoint_is_refused() {
+    let peer = peer(signers::ed25519_did_key());
+
+    let response = send(&peer, get(SIG_TARGET).body(Body::empty()).unwrap()).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
