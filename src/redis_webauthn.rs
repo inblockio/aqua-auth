@@ -1,17 +1,14 @@
 //! Redis-backed [`crate::webauthn_store::WebauthnCredentialBackend`]
 //! (features `webauthn` + `redis`).
 //!
-//! The credential-store twin of [`crate::redis_backend::RedisBackend`]: passkey
-//! credentials live in Redis so they survive restarts and are shared across
-//! instances — the single production store all consumers (aqua-node, and
-//! aquafier via aqua-node) read and write. Purely additive; only compiles with
-//! both features on.
+//! Passkey credentials live in Redis so they survive restarts and are shared
+//! across instances: the single production store all consumers (aqua-node, and
+//! aquafier via aqua-node) read and write. Only compiles with both features on.
 //!
-//! Like `RedisBackend`, this uses the `redis` crate's SYNC API behind a
-//! `Mutex<redis::Connection>` (the backend trait is sync, and `redis::Connection`
-//! is `!Sync`).
+//! Uses the `redis` crate's SYNC API behind a `Mutex<redis::Connection>` (the
+//! credential-store trait is sync, and `redis::Connection` is `!Sync`).
 //!
-//! Key layout (credentials are persistent — NO TTL, unlike sessions):
+//! Key layout (credentials are persistent, NO TTL, unlike sessions):
 //! - `aqua:webauthn:cred:{b64url(credential_id)}` -> JSON [`StoredCredential`]
 //! - `aqua:webauthn:did:{did}` -> a Redis SET of the b64url credential ids that
 //!   belong to `did`, so `list_for_did` is a set-read + MGET, not a keyspace scan.
@@ -21,7 +18,6 @@ use std::sync::{Mutex, MutexGuard};
 use base64::Engine;
 use redis::Commands;
 
-use crate::auth_error::AuthError;
 use crate::webauthn_store::{
     CredentialId, NewCredential, StoredCredential, WebauthnCredentialBackend, WebauthnStoreError,
 };
@@ -51,12 +47,14 @@ pub struct RedisWebauthnStore {
 }
 
 impl RedisWebauthnStore {
-    /// Connect to Redis at `url` (e.g. `redis://127.0.0.1:6379`). Shares the
-    /// same server as [`crate::redis_backend::RedisBackend`]; the key prefixes
-    /// keep credentials and sessions in disjoint namespaces.
-    pub fn connect(url: &str) -> Result<Self, AuthError> {
-        let client = redis::Client::open(url).map_err(AuthError::Redis)?;
-        let conn = client.get_connection().map_err(AuthError::Redis)?;
+    /// Connect to Redis at `url` (e.g. `redis://127.0.0.1:6379`).
+    ///
+    /// Errors are reported as [`WebauthnStoreError::Backend`] carrying the
+    /// stringified `redis` error, so no `redis` type appears in this crate's
+    /// public API.
+    pub fn connect(url: &str) -> Result<Self, WebauthnStoreError> {
+        let client = redis::Client::open(url).map_err(backend)?;
+        let conn = client.get_connection().map_err(backend)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -158,8 +156,8 @@ impl WebauthnCredentialBackend for RedisWebauthnStore {
     }
 }
 
-// Serializes the redis-gated tests (like redis_backend.rs). Each skips unless
-// TEST_REDIS_URL is set, so this has no effect on the no-Redis default path.
+// Serializes the redis-gated tests. Each skips unless TEST_REDIS_URL is set,
+// so this has no effect on the no-Redis default path.
 #[cfg(test)]
 static REDIS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

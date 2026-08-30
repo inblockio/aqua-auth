@@ -1,15 +1,14 @@
-//! `SessionBackend` — pluggable storage seam for [`crate::session::SessionStore`].
+//! `SessionBackend`: pluggable storage seam for [`crate::session::SessionStore`].
 //!
-//! This module is purely additive: it does not change `SessionStore`'s
-//! behavior or public API. It defines a storage trait that a future task
-//! will wire `SessionStore` to use internally, so a Redis (or other)
-//! backend can be layered in later without another semver break.
+//! [`crate::session::SessionStore`] drives an implementation of this trait for
+//! all of its storage; [`InMemoryBackend`] is the default. A consumer that
+//! needs durable or shared sessions (Redis, SQL) implements this trait in the
+//! crate that owns its connection pool and passes it to
+//! [`crate::session::SessionStore::with_backend`].
 //!
 //! Token generation, TTL math, and capacity enforcement are policy that
 //! stays in `SessionStore`. A `SessionBackend` is pure storage: insert,
 //! get, remove, and enumerate sessions keyed by token.
-
-use std::sync::Arc;
 
 use crate::auth_error::AuthError;
 use crate::types::Session;
@@ -18,7 +17,7 @@ use dashmap::DashMap;
 /// Pluggable storage seam for authenticated sessions.
 ///
 /// Implementations are pure key-value storage keyed by session token; they
-/// do not generate tokens, enforce TTLs, or enforce capacity limits — that
+/// do not generate tokens, enforce TTLs, or enforce capacity limits; that
 /// policy lives in [`crate::session::SessionStore`], which will drive an
 /// implementation of this trait.
 pub trait SessionBackend: Send + Sync {
@@ -161,51 +160,6 @@ impl SessionBackend for InMemoryBackend {
     }
 }
 
-/// Selects which [`SessionBackend`] implementation [`build_backend`] should
-/// construct, so a consumer can pick a backend from config (e.g. a string
-/// read from a TOML/env value) without branching on cargo features itself.
-#[non_exhaustive]
-pub enum SessionBackendKind {
-    /// [`InMemoryBackend`]. Always available, in every feature configuration.
-    Memory,
-    /// [`crate::redis_backend::RedisBackend`] at the given connection URL
-    /// (e.g. `redis://127.0.0.1:6379`). This variant always exists so
-    /// `SessionBackendKind` itself compiles the same way regardless of the
-    /// `redis` feature; only its *connect path* in [`build_backend`] is
-    /// feature-gated. Without the `redis` feature, [`build_backend`] returns
-    /// `Err(AuthError::BackendUnavailable(_))` instead of failing to compile.
-    Redis(String),
-}
-
-/// Construct a [`SessionBackend`] from a [`SessionBackendKind`].
-///
-/// This is the seam consumers (aqua-node, aquafier) use to select a session
-/// backend from config without `#[cfg(feature = "redis")]` at the call site:
-/// they hold a `SessionBackendKind` (built from a config string) and call
-/// this function, which does the feature branching internally.
-///
-/// `SessionBackendKind::Redis(_)` without the `redis` cargo feature enabled
-/// returns a descriptive `Err(AuthError::BackendUnavailable(_))` rather than
-/// failing to compile.
-pub fn build_backend(kind: SessionBackendKind) -> Result<Arc<dyn SessionBackend>, AuthError> {
-    match kind {
-        SessionBackendKind::Memory => Ok(Arc::new(InMemoryBackend::new())),
-
-        #[cfg(feature = "redis")]
-        SessionBackendKind::Redis(url) => {
-            let backend = crate::redis_backend::RedisBackend::connect(&url)?;
-            Ok(Arc::new(backend))
-        }
-
-        #[cfg(not(feature = "redis"))]
-        SessionBackendKind::Redis(_url) => Err(AuthError::BackendUnavailable(
-            "redis session backend requested but this build of aqua-auth was compiled without \
-             the `redis` cargo feature"
-                .to_string(),
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,64 +228,5 @@ mod tests {
 
         // Idempotent: a second sweep at the same instant removes nothing.
         assert_eq!(b.purge_expired(1_500), 0);
-    }
-}
-
-#[cfg(test)]
-mod build_backend_tests {
-    use super::*;
-    use crate::types::Session;
-
-    #[test]
-    fn build_backend_memory_round_trips_a_session() {
-        let backend = build_backend(SessionBackendKind::Memory).unwrap();
-        let s = Session {
-            did: "did:key:zBuild".into(),
-            token: "build-tok".into(),
-            valid_until: 9_999_999_999,
-            created_at: 1,
-        };
-        backend.insert(s.clone()).unwrap();
-        assert_eq!(backend.get("build-tok").unwrap().did, "did:key:zBuild");
-        assert_eq!(backend.len(), 1);
-        assert!(backend.remove("build-tok"));
-        assert!(backend.get("build-tok").is_none());
-    }
-
-    #[cfg(not(feature = "redis"))]
-    #[test]
-    fn build_backend_redis_without_feature_returns_descriptive_err() {
-        let result = build_backend(SessionBackendKind::Redis("redis://127.0.0.1:6379".into()));
-        let err = match result {
-            Ok(_) => panic!("expected an Err without the `redis` feature enabled"),
-            Err(e) => e,
-        };
-        let msg = err.to_string();
-        assert!(
-            msg.to_lowercase().contains("redis"),
-            "expected the error message to mention redis, got: {msg}"
-        );
-    }
-
-    #[cfg(feature = "redis")]
-    #[test]
-    fn build_backend_redis_with_feature_connects_when_available() {
-        let Ok(url) = std::env::var("TEST_REDIS_URL") else {
-            eprintln!("skip: TEST_REDIS_URL unset");
-            return;
-        };
-        let backend = build_backend(SessionBackendKind::Redis(url)).unwrap();
-        let s = Session {
-            did: "did:key:zBuildRedis".into(),
-            token: "build-redis-tok".into(),
-            valid_until: 9_999_999_999,
-            created_at: 1,
-        };
-        backend.insert(s.clone()).unwrap();
-        assert_eq!(
-            backend.get("build-redis-tok").unwrap().did,
-            "did:key:zBuildRedis"
-        );
-        assert!(backend.remove("build-redis-tok"));
     }
 }

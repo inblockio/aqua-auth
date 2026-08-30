@@ -1,6 +1,6 @@
 [package]
 name = "aqua-auth"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "Apache-2.0"
 readme = "README.md"
@@ -20,7 +20,12 @@ http-sig = ["dep:sfv", "dep:base64", "dep:rand", "dep:dashmap"]
 # separate from `webauthn` so consumers that only VERIFY assertions (the light
 # path) don't pull the heavy webauthn-rs stack.
 ceremony = ["webauthn", "dep:webauthn-rs", "dep:uuid"]
-redis = ["dep:redis", "http"]
+# The Redis-backed WebAuthn credential store (`RedisWebauthnStore`), which is
+# the only thing this feature now compiles: the Redis *session* backend was
+# removed in 0.6.0 (see CHANGELOG). Implies `webauthn` because the credential
+# store is gated on it; without that implication `--features redis` would build
+# the `redis` crate and expose nothing.
+redis = ["dep:redis", "webauthn"]
 
 [dependencies]
 # Always (crypto layer)
@@ -67,11 +72,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # dependency tree, so this adds no new code to the build.
 url = { version = "2", optional = true }
 
-# Behind `redis` feature. Sync API only (SessionBackend is a sync trait):
-# default features give us `redis::Client` + `get_connection()` (blocking
-# `redis::Connection`). Deliberately NOT enabling `tokio-comp`/`aio`/
-# `connection-manager` — those are async-only and would need a runtime
-# handle inside sync trait methods.
+# Behind `redis` feature. Sync API only (WebauthnCredentialBackend is a sync
+# trait): default features give us `redis::Client` + `get_connection()`
+# (blocking `redis::Connection`). Deliberately NOT enabling `tokio-comp`/`aio`/
+# `connection-manager`, which are async-only and would need a runtime handle
+# inside sync trait methods.
 redis = { version = "0.27", optional = true }
 
 [dev-dependencies]

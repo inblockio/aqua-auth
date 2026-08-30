@@ -11,7 +11,7 @@ description = "Public-key advertisement for Aqua services: a JWKS directory per 
 # Task 5), this requirement must be bumped with it. Cargo checks a path
 # dependency's actual version against the requirement, so a stale req here
 # fails resolution rather than silently drifting.
-aqua-auth = { path = "..", version = "0.5" }
+aqua-auth = { path = "..", version = "0.6" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

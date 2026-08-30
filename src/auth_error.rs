@@ -26,33 +26,14 @@ pub enum AuthError {
     #[error("session store at capacity ({max} sessions); new session rejected")]
     SessionStoreFull { max: usize },
 
-    /// [`crate::session_backend::build_backend`] was asked for a
-    /// [`crate::session_backend::SessionBackendKind`] whose implementation
-    /// requires a cargo feature that is not compiled in (e.g.
-    /// `SessionBackendKind::Redis` without the `redis` feature). Always
-    /// available (not feature-gated) so `build_backend` compiles and returns
-    /// this in both configurations.
+    /// A [`crate::session_backend::SessionBackend`] could not serve a
+    /// request: it could not reach its store, could not (de)serialize a
+    /// [`crate::types::Session`], or was asked for a capability it does not
+    /// have. This crate ships only
+    /// [`crate::session_backend::InMemoryBackend`], which never returns it;
+    /// it is the reporting channel for out-of-tree backends (Redis, SQL) so
+    /// their storage-specific error types stay out of this crate's public
+    /// API. Carries a human-readable description, not a typed cause.
     #[error("session backend unavailable: {0}")]
     BackendUnavailable(String),
-
-    /// [`crate::redis_backend::RedisBackend`] (feature `redis`) failed to
-    /// connect to or communicate with Redis.
-    #[cfg(feature = "redis")]
-    #[error("redis error: {0}")]
-    Redis(#[from] redis::RedisError),
-
-    /// [`crate::redis_backend::RedisBackend`] (feature `redis`) failed to
-    /// (de)serialize a [`crate::types::Session`] to/from JSON.
-    #[cfg(feature = "redis")]
-    #[error("session (de)serialization error: {0}")]
-    Serde(#[from] serde_json::Error),
-
-    /// [`crate::redis_backend::RedisBackend`] (feature `redis`) found its
-    /// internal connection mutex poisoned by a prior panic on another
-    /// thread. Read methods degrade to their safe default instead of
-    /// surfacing this (see the trait's infallible signatures); `insert` is
-    /// the one fallible method, so it reports this explicitly.
-    #[cfg(feature = "redis")]
-    #[error("redis backend: connection lock poisoned by a prior panic")]
-    LockPoisoned,
 }

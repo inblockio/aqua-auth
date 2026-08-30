@@ -72,17 +72,11 @@ pub use message::{build_message, MessageParams};
 #[cfg(feature = "http")]
 pub use session::SessionStore;
 #[cfg(feature = "http")]
-pub use session_backend::{build_backend, InMemoryBackend, SessionBackend, SessionBackendKind};
+pub use session_backend::{InMemoryBackend, SessionBackend};
 #[cfg(feature = "http")]
 pub use types::{AuthenticatedDid, Challenge, Session, SessionInfo};
 #[cfg(feature = "http")]
 pub use wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
-
-// --- Behind `redis` feature (implies `http`) ---
-#[cfg(feature = "redis")]
-pub mod redis_backend;
-#[cfg(feature = "redis")]
-pub use redis_backend::RedisBackend;
 
 // --- Behind `client` feature ---
 #[cfg(feature = "client")]
