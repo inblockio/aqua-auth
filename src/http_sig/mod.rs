@@ -370,7 +370,6 @@ pub(crate) fn alg_for_did(did: &str) -> Result<&'static str, HttpSigError> {
 /// A clock before the epoch yields 0, which makes every signature look either
 /// expired (when verifying) or created far in the past (when signing). Both
 /// fail closed, which is the right behaviour for a broken clock.
-#[allow(dead_code)]
 pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
