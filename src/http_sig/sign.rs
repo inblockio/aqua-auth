@@ -187,7 +187,10 @@ mod tests {
         let expected_base = base::build_signature_base(&parts(), &params).unwrap();
         assert_eq!(
             headers.signature_input,
-            format!("sig1={}", base::serialize_signature_params(&params).unwrap())
+            format!(
+                "sig1={}",
+                base::serialize_signature_params(&params).unwrap()
+            )
         );
 
         let sig = decode_signature(&headers.signature);
@@ -251,9 +254,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(headers
-            .signature_input
-            .contains("alg=\"eip191-secp256k1\""));
+        assert!(headers.signature_input.contains("alg=\"eip191-secp256k1\""));
     }
 
     // ── validity window bounds ──────────────────────────────────────────
@@ -275,9 +276,11 @@ mod tests {
     #[tokio::test]
     async fn validity_of_exactly_24h_is_accepted() {
         let signer = Ed25519TestSigner::generate();
-        assert!(sign_request(&signer, &parts(), &Profile::AquaInternal, MAX_VALIDITY)
-            .await
-            .is_ok());
+        assert!(
+            sign_request(&signer, &parts(), &Profile::AquaInternal, MAX_VALIDITY)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -320,7 +323,10 @@ mod tests {
         let b = extract_quoted(&second.signature_input, "nonce");
         assert_ne!(a, b, "nonces must not repeat");
         assert!(!a.contains('='), "base64url must be unpadded");
-        assert!(!a.contains('+') && !a.contains('/'), "must be the URL alphabet");
+        assert!(
+            !a.contains('+') && !a.contains('/'),
+            "must be the URL alphabet"
+        );
 
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
         assert_eq!(URL_SAFE_NO_PAD.decode(&a).unwrap().len(), NONCE_BYTES);

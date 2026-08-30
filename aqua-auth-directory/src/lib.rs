@@ -173,8 +173,7 @@ mod tests {
     pub(crate) const DID_B: &str = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
     pub(crate) const X_B: &str = "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik";
     /// A P-256 `did:key`, which is well-formed but out of scope in v0.1.
-    pub(crate) const DID_P256: &str =
-        "did:key:zDnaeQVuEURtDUXbSTyTUdJpYzELcVW3bTUyvU2rzNRQWuQEb";
+    pub(crate) const DID_P256: &str = "did:key:zDnaeQVuEURtDUXbSTyTUdJpYzELcVW3bTUyvU2rzNRQWuQEb";
 
     pub(crate) fn key(did: &str, nbf: u64, exp: u64) -> AdvertisedKey {
         AdvertisedKey {

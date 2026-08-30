@@ -93,25 +93,26 @@ pub(crate) fn authority_from_uri(target_uri: &str) -> Result<String, HttpSigErro
 
     // IPv6 literals are bracketed, and those brackets contain colons, so the
     // host/port split has to happen after the closing bracket.
-    let (host, port) = match authority.rfind(']') {
-        Some(close) if authority.starts_with('[') => {
-            let host = &authority[..=close];
-            match &authority[close + 1..] {
-                "" => (host, None),
-                tail => (
-                    host,
-                    Some(tail.strip_prefix(':').ok_or_else(|| {
-                        HttpSigError::InvalidTargetUri(target_uri.to_string())
-                    })?),
-                ),
+    let (host, port) =
+        match authority.rfind(']') {
+            Some(close) if authority.starts_with('[') => {
+                let host = &authority[..=close];
+                match &authority[close + 1..] {
+                    "" => (host, None),
+                    tail => (
+                        host,
+                        Some(tail.strip_prefix(':').ok_or_else(|| {
+                            HttpSigError::InvalidTargetUri(target_uri.to_string())
+                        })?),
+                    ),
+                }
             }
-        }
-        Some(_) => return Err(HttpSigError::InvalidTargetUri(target_uri.to_string())),
-        None => match authority.split_once(':') {
-            Some((host, port)) => (host, Some(port)),
-            None => (authority, None),
-        },
-    };
+            Some(_) => return Err(HttpSigError::InvalidTargetUri(target_uri.to_string())),
+            None => match authority.split_once(':') {
+                Some((host, port)) => (host, Some(port)),
+                None => (authority, None),
+            },
+        };
 
     let host = host.to_ascii_lowercase();
     if host.is_empty() || host == "[]" {
@@ -200,9 +201,7 @@ fn write_params_inner_list(
 }
 
 /// The `@signature-params` component value: a parameterized inner list.
-pub(crate) fn serialize_signature_params(
-    params: &SignatureParams,
-) -> Result<String, HttpSigError> {
+pub(crate) fn serialize_signature_params(params: &SignatureParams) -> Result<String, HttpSigError> {
     let mut ser = sfv::ListSerializer::new();
     write_params_inner_list(ser.inner_list(), params)?;
     ser.finish()

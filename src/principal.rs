@@ -43,7 +43,9 @@ impl Principal {
     /// unknown or malformed method cannot become a `Principal`.
     pub fn from_trusted_did(did: &str) -> Result<Self, CryptoError> {
         find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
-        Ok(Self { did: did.to_string() })
+        Ok(Self {
+            did: did.to_string(),
+        })
     }
 
     /// The complete DID that signed: the identity of record.

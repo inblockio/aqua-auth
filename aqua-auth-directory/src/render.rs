@@ -316,7 +316,10 @@ mod tests {
     #[test]
     fn jwks_cache_control_expires_with_the_soonest_key() {
         // Soonest active exp is 200, now is 150, so 50s, lifted to the floor.
-        assert_eq!(max_age(&render_jwks(&registry(&[(DID_A, 100, 200)]), 150).unwrap()), 60);
+        assert_eq!(
+            max_age(&render_jwks(&registry(&[(DID_A, 100, 200)]), 150).unwrap()),
+            60
+        );
         // Soonest active exp is 10_000, now is 1_000, so 9_000s, above floor.
         let reg = registry(&[(DID_A, 0, 10_000), (DID_B, 0, 50_000)]);
         assert_eq!(max_age(&render_jwks(&reg, 1_000).unwrap()), 9_000);
