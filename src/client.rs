@@ -6,6 +6,7 @@
 use crate::auth_error::AuthError;
 use crate::did::identifier_from_message;
 use crate::did_method::find_did_method;
+use crate::signer::Signer;
 use crate::types::Session;
 use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 
@@ -17,35 +18,37 @@ use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 /// returns [`SessionResponse`]. Both are defined in [`crate::wire`].
 ///
 /// 1. `GET /auth/challenge?did=<did>` -- obtain a [`ChallengeEnvelope`]
-/// 2. Sign the challenge message using the provided `sign_fn`
+/// 2. Check the challenge, then sign it with `signer` (see below)
 /// 3. `POST /auth/session` -- exchange signed challenge for a [`SessionResponse`],
 ///    translated into the internal [`Session`] type for callers
 ///
-/// The `sign_fn` takes the canonical CAIP-122 message and returns
-/// the hex-encoded signature (with or without `0x` prefix).
+/// The DID is read from [`Signer::signer_did`] rather than passed separately,
+/// so pairing a message with the wrong identity is unrepresentable. Signing is
+/// asynchronous because production key custody waits on something external: a
+/// KMS or HSM round trip, a wallet prompt, a passkey touch. The raw signature
+/// bytes the signer returns are hex-encoded with an `0x` prefix for the wire.
 ///
 /// # Challenge binding
 ///
 /// Before signing, the returned message is checked against what the client
-/// asked for: its identifier line must match the identifier derived from
-/// `did`, and its `URI:` line must have the same origin as `base_url` (scheme,
-/// host, port; paths ignored). Either mismatch refuses to sign. This kills the
-/// relay: a compromised endpoint that forwards a challenge minted for another
-/// aqua service presents a message whose URI origin is that service's, not the
-/// origin the client dialed, so the client never signs it. The `domain` line is
-/// not enforced, because it is a free-form label (deployed servers use
+/// asked for: its identifier line must match the identifier derived from the
+/// signer's DID, and its `URI:` line must have the same origin as `base_url`
+/// (scheme, host, port; paths ignored). Either mismatch refuses to sign. This
+/// kills the relay: a compromised endpoint that forwards a challenge minted for
+/// another aqua service presents a message whose URI origin is that service's,
+/// not the origin the client dialed, so the client never signs it. The `domain`
+/// line is not enforced, because it is a free-form label (deployed servers use
 /// non-hostnames such as `aqua-node`).
-pub async fn authenticate<F>(
+pub async fn authenticate(
     http: &reqwest::Client,
     base_url: &str,
-    did: &str,
-    sign_fn: F,
-) -> Result<Session, AuthClientError>
-where
-    F: FnOnce(&str) -> Result<String, Box<dyn std::error::Error + Send + Sync>>,
-{
+    signer: &dyn Signer,
+) -> Result<Session, AuthClientError> {
     // 1. Request challenge
-    let challenge_url = format!("{base_url}/auth/challenge?did={}", urlencoded(did));
+    let challenge_url = format!(
+        "{base_url}/auth/challenge?did={}",
+        urlencoded(signer.signer_did())
+    );
     let envelope: ChallengeEnvelope = http
         .get(&challenge_url)
         .send()
@@ -57,8 +60,48 @@ where
         .await
         .map_err(AuthClientError::Http)?;
 
-    // 1a. Defense in depth: verify the identifier embedded in the SIWE
-    //     message matches the identifier derived from the requested DID.
+    // 2. Check the challenge and sign it
+    let req = signed_session_request(envelope, base_url, signer).await?;
+
+    // 3. Exchange for session
+    let session_url = format!("{base_url}/auth/session");
+
+    let resp: SessionResponse = http
+        .post(&session_url)
+        .json(&req)
+        .send()
+        .await
+        .map_err(AuthClientError::Http)?
+        .error_for_status()
+        .map_err(AuthClientError::Http)?
+        .json()
+        .await
+        .map_err(AuthClientError::Http)?;
+
+    Ok(Session {
+        did: resp.did,
+        token: resp.token,
+        valid_until: resp.valid_until,
+        created_at: resp.created_at,
+    })
+}
+
+/// Everything between receiving a challenge and posting a session: the two
+/// binding checks, the signature, and the request body.
+///
+/// Split out of [`authenticate`] so the security-critical part of the flow is
+/// reachable from a unit test with a plain [`ChallengeEnvelope`] value, leaving
+/// `authenticate` as the thin HTTP wrapper. Both checks run before signing, so
+/// a challenge this client did not ask for never reaches the key.
+async fn signed_session_request(
+    envelope: ChallengeEnvelope,
+    base_url: &str,
+    signer: &dyn Signer,
+) -> Result<SessionRequest, AuthClientError> {
+    let did = signer.signer_did();
+
+    // 1. Defense in depth: verify the identifier embedded in the SIWE
+    //    message matches the identifier derived from the requested DID.
     let method = find_did_method(did).ok_or_else(|| {
         AuthClientError::Auth(
             crate::crypto_error::CryptoError::UnsupportedMethod(did.to_string()).into(),
@@ -80,38 +123,21 @@ where
         });
     }
 
-    // 1b. Bind the challenge to the endpoint we actually dialed: the message's
-    //     URI origin must be ours, or a relayed challenge would get signed.
+    // 2. Bind the challenge to the endpoint we actually dialed: the message's
+    //    URI origin must be ours, or a relayed challenge would get signed.
     verify_uri_binding(&envelope.message, base_url)?;
 
-    // 2. Sign the message
-    let signature = sign_fn(&envelope.message).map_err(|e| AuthClientError::Sign(e.to_string()))?;
+    // 3. Sign the message. Awaited: the backend may be a KMS, an HSM, or a
+    //    wallet prompt, none of which return synchronously.
+    let sig_bytes = signer
+        .sign(&envelope.message)
+        .await
+        .map_err(|e| AuthClientError::Sign(e.to_string()))?;
 
-    // 3. Exchange for session
-    let session_url = format!("{base_url}/auth/session");
-    let req = SessionRequest {
+    Ok(SessionRequest {
         did: did.to_string(),
         nonce: envelope.nonce,
-        signature,
-    };
-
-    let resp: SessionResponse = http
-        .post(&session_url)
-        .json(&req)
-        .send()
-        .await
-        .map_err(AuthClientError::Http)?
-        .error_for_status()
-        .map_err(AuthClientError::Http)?
-        .json()
-        .await
-        .map_err(AuthClientError::Http)?;
-
-    Ok(Session {
-        did: resp.did,
-        token: resp.token,
-        valid_until: resp.valid_until,
-        created_at: resp.created_at,
+        signature: format!("0x{}", hex::encode(sig_bytes)),
     })
 }
 
