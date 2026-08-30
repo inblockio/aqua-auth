@@ -15,6 +15,7 @@ webauthn = ["dep:sha2", "dep:base64", "dep:serde_json"]
 
 [dependencies]
 # Always (crypto layer)
+async-trait = "0.1"
 k256 = { version = "0.13", features = ["ecdsa"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
