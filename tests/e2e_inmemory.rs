@@ -174,3 +174,184 @@ async fn p256_did_pkh_logs_in_end_to_end() {
 async fn eip155_did_pkh_logs_in_end_to_end() {
     assert_login_matrix(signers::eip155()).await;
 }
+
+// ── adversarial: the server half refuses over the wire ──────────────────
+//
+// Status contract (the plan's route table): a nonce the store does not hold is
+// 404, every other credential failure is 401. A *spent* nonce is 404 rather
+// than 401 because `ChallengeStore::validate` removes it, which makes "already
+// used" and "never issued" the same observation. That indistinguishability is
+// the point: it denies an attacker a nonce-existence oracle.
+
+#[tokio::test]
+async fn a_nonce_this_server_never_issued_is_refused() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: signer.signer_did().to_string(),
+            nonce: format!("0x{}", "11".repeat(32)),
+            signature: hex::encode([0u8; 64]),
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_nonce_spent_by_a_successful_login_cannot_be_reused() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let envelope = fetch_challenge(&peer, signer.signer_did()).await;
+    let signature = hex::encode(signer.sign(&envelope.message).await.unwrap());
+    let request = SessionRequest {
+        did: signer.signer_did().to_string(),
+        nonce: envelope.nonce,
+        signature,
+    };
+
+    let first = post_session(&peer, &request).await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    // Byte-identical replay of a request that just succeeded.
+    let second = post_session(&peer, &request).await;
+    assert_eq!(
+        second.status(),
+        StatusCode::NOT_FOUND,
+        "a spent nonce is gone from the store, so it reads as never-issued"
+    );
+}
+
+#[tokio::test]
+async fn a_challenge_past_its_ttl_is_refused() {
+    // The one place real time is unavoidable: the TTL lives inside
+    // ChallengeStore and the plan forbids injecting a clock into src/. A 1s TTL
+    // outlived by 1.2s is the shortest honest way to cross that boundary.
+    let signer = signers::ed25519_did_key();
+    let peer = AquaPeer::in_memory("peer-a", BASE_URL, 1, signer.clone());
+
+    let envelope = fetch_challenge(&peer, signer.signer_did()).await;
+    let signature = hex::encode(signer.sign(&envelope.message).await.unwrap());
+    tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: signer.signer_did().to_string(),
+            nonce: envelope.nonce,
+            signature,
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_challenge_issued_to_one_did_cannot_be_claimed_by_another() {
+    // Both signatures are genuine; only the pairing is wrong. The store ties
+    // each nonce to the DID it was minted for, so this fails before any
+    // cryptography runs.
+    let alice = signers::ed25519_did_key();
+    let mallory = signers::ed25519_did_key();
+    let peer = peer(alice.clone());
+
+    let envelope = fetch_challenge(&peer, alice.signer_did()).await;
+    let signature = hex::encode(mallory.sign(&envelope.message).await.unwrap());
+
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: mallory.signer_did().to_string(),
+            nonce: envelope.nonce,
+            signature,
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_tampered_signature_is_refused() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let envelope = fetch_challenge(&peer, signer.signer_did()).await;
+    let mut signature = signer.sign(&envelope.message).await.unwrap();
+    signature[0] ^= 0xff;
+
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: signer.signer_did().to_string(),
+            nonce: envelope.nonce,
+            signature: hex::encode(signature),
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_signature_that_is_not_hex_is_refused() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let envelope = fetch_challenge(&peer, signer.signer_did()).await;
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: signer.signer_did().to_string(),
+            nonce: envelope.nonce,
+            signature: "not-hex-at-all".to_string(),
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn whoami_refuses_a_token_it_never_minted() {
+    let peer = peer(signers::ed25519_did_key());
+
+    let response = whoami(&peer, "deadbeef-not-a-token").await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn whoami_refuses_a_request_with_no_authorization_header() {
+    let peer = peer(signers::ed25519_did_key());
+
+    let response = send(&peer, get("/whoami").body(Body::empty()).unwrap()).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_challenge_is_not_minted_for_an_unsupported_did() {
+    let peer = peer(signers::ed25519_did_key());
+
+    for did in ["did:pkh:solana:0xabc", "not-a-did", ""] {
+        let response = send(
+            &peer,
+            get(&format!("/auth/challenge?did={did}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "unsupported DID {did:?} must not get a challenge"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_challenge_request_with_no_did_is_refused() {
+    let peer = peer(signers::ed25519_did_key());
+
+    let response = send(&peer, get("/auth/challenge").body(Body::empty()).unwrap()).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
