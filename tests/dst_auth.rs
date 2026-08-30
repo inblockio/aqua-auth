@@ -519,9 +519,10 @@ fn run_baseline(seed: u64, signer: Arc<dyn Signer>) -> Recorded {
 // Scenarios
 // ---------------------------------------------------------------------------
 
-/// Every message spends 50 to 200 simulated milliseconds on the wire. The flow
-/// is challenge-response over four round trips, so this is the scenario that
-/// says latency alone breaks nothing.
+/// Every message spends 50 to 200 simulated milliseconds on the wire, and the
+/// flow is three requests on three fresh connections, so the latency is paid
+/// on every connect and every exchange. This is the scenario that says latency
+/// alone breaks nothing.
 #[test]
 fn login_completes_under_injected_latency() {
     let signer = signers::ed25519_did_key();
