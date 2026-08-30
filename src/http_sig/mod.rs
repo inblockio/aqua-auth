@@ -68,8 +68,10 @@ mod base;
 mod sign;
 #[cfg(test)]
 mod test_signers;
+mod verify;
 
 pub use sign::sign_request;
+pub use verify::{verify_request, VerifyOptions};
 
 use crate::crypto_error::CryptoError;
 use crate::did_method::find_did_method;
