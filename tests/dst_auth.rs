@@ -187,10 +187,18 @@ impl HttpReply {
 
 /// One request on one fresh simulated connection.
 ///
-/// `Host` is always sent: without it the peer's `/sig/whoami` handler has no
-/// authority to rebuild, and HTTP/1.1 requires it regardless. `Connection:
-/// close` keeps every exchange to exactly one connection, which is what makes
-/// "two sequential connections" in the duplicate scenario literally true.
+/// `Host` is always sent, because HTTP/1.1 requires it and because the peer
+/// derives `@authority` from it: the request-signature route rebuilds its
+/// signature base from that header and answers 400 when neither it nor an
+/// absolute-form request target supplies one. The routes this suite drives are
+/// session-token routes, and hyper serves those even without a `Host` (checked
+/// by deleting the header: the baseline still passed), so sending it is
+/// conformance and future-proofing rather than a workaround for a failure
+/// observed here.
+///
+/// `Connection: close` keeps every exchange to exactly one connection, which
+/// is what makes "two sequential connections" in the duplicate scenario
+/// literally true rather than a figure of speech about a pooled socket.
 async fn request(
     method: &str,
     path: &str,
@@ -340,7 +348,10 @@ async fn fetch_challenge_with_retries(did: &str) -> IoResult<(ChallengeEnvelope,
 }
 
 /// Sign the challenge message and build the body to post.
-async fn sign_challenge(signer: &dyn Signer, envelope: ChallengeEnvelope) -> IoResult<SessionRequest> {
+async fn sign_challenge(
+    signer: &dyn Signer,
+    envelope: ChallengeEnvelope,
+) -> IoResult<SessionRequest> {
     let signature = signer
         .sign(&envelope.message)
         .await
@@ -355,8 +366,8 @@ async fn sign_challenge(signer: &dyn Signer, envelope: ChallengeEnvelope) -> IoR
 /// `POST /auth/session`, returning the raw reply so a scenario can assert on
 /// the status rather than only on success.
 async fn post_session(session_request: &SessionRequest) -> IoResult<HttpReply> {
-    let body = serde_json::to_vec(session_request)
-        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+    let body =
+        serde_json::to_vec(session_request).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
     request(
         "POST",
         "/auth/session",
@@ -387,7 +398,7 @@ async fn whoami(token: &str) -> IoResult<String> {
 
 /// What a simulated client proved, handed back to the test body to assert on
 /// once `Sim::run` has returned.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 struct Recorded {
     /// The DID the session was minted for.
     session_did: String,
@@ -544,8 +555,7 @@ fn login_survives_a_partition_that_heals() {
     let client_signer = signer.clone();
     sim.client(CLIENT_HOST, async move {
         let signer = client_signer.as_ref();
-        let (envelope, failed_attempts) =
-            fetch_challenge_with_retries(signer.signer_did()).await?;
+        let (envelope, failed_attempts) = fetch_challenge_with_retries(signer.signer_did()).await?;
         let (session_did, whoami_did) = finish_login(signer, envelope).await?;
         *client_sink.lock().unwrap() = Some(Recorded {
             session_did,
@@ -640,13 +650,21 @@ fn a_duplicated_session_post_mints_exactly_one_session() {
 
     let outcome = recorded(&sink);
     assert_eq!(
-        outcome.statuses.iter().filter(|status| **status == 200).count(),
+        outcome
+            .statuses
+            .iter()
+            .filter(|status| **status == 200)
+            .count(),
         1,
         "exactly one delivery may mint a session, got {:?}",
         outcome.statuses
     );
     assert_eq!(
-        outcome.statuses.iter().filter(|status| **status == 404).count(),
+        outcome
+            .statuses
+            .iter()
+            .filter(|status| **status == 404)
+            .count(),
         1,
         "exactly one delivery must find the nonce already gone, got {:?}",
         outcome.statuses
