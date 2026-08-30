@@ -53,7 +53,10 @@ impl Ed25519Local {
         let mut bytes: Vec<u8> = vec![0xed, 0x01];
         bytes.extend_from_slice(key.verifying_key().as_bytes());
         let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());
-        assert!(did.starts_with("did:key:z6Mk"), "expected a z6Mk DID: {did}");
+        assert!(
+            did.starts_with("did:key:z6Mk"),
+            "expected a z6Mk DID: {did}"
+        );
         Self { key, did }
     }
 }
@@ -341,10 +344,15 @@ async fn the_same_nonce_is_refused_the_second_time() {
     .await
     .unwrap();
 
-    let opts =
-        VerifyOptions::aqua_internal().with_replay_guard(Arc::new(NonceReplayGuard::new()));
+    let opts = VerifyOptions::aqua_internal().with_replay_guard(Arc::new(NonceReplayGuard::new()));
 
-    assert!(verify_request(&parts(), &headers.signature_input, &headers.signature, &opts).is_ok());
+    assert!(verify_request(
+        &parts(),
+        &headers.signature_input,
+        &headers.signature,
+        &opts
+    )
+    .is_ok());
     let err = verify_request(
         &parts(),
         &headers.signature_input,
@@ -371,8 +379,13 @@ async fn an_expired_window_fails() {
     );
     let (input, signature) = forge(&signer, &value).await;
 
-    let err = verify_request(&parts(), &input, &signature, &VerifyOptions::aqua_internal())
-        .unwrap_err();
+    let err = verify_request(
+        &parts(),
+        &input,
+        &signature,
+        &VerifyOptions::aqua_internal(),
+    )
+    .unwrap_err();
     assert!(matches!(err, HttpSigError::Expired { .. }), "got {err:?}");
 }
 
@@ -390,8 +403,13 @@ async fn a_created_beyond_the_clock_skew_fails() {
     );
     let (input, signature) = forge(&signer, &value).await;
 
-    let err = verify_request(&parts(), &input, &signature, &VerifyOptions::aqua_internal())
-        .unwrap_err();
+    let err = verify_request(
+        &parts(),
+        &input,
+        &signature,
+        &VerifyOptions::aqua_internal(),
+    )
+    .unwrap_err();
     assert!(
         matches!(err, HttpSigError::CreatedInFuture { .. }),
         "got {err:?}"
@@ -431,8 +449,13 @@ async fn a_window_over_24h_is_also_rejected_at_verify_time() {
     );
     let (input, signature) = forge(&signer, &value).await;
 
-    let err = verify_request(&parts(), &input, &signature, &VerifyOptions::aqua_internal())
-        .unwrap_err();
+    let err = verify_request(
+        &parts(),
+        &input,
+        &signature,
+        &VerifyOptions::aqua_internal(),
+    )
+    .unwrap_err();
     assert!(
         matches!(err, HttpSigError::ValidityTooLong { .. }),
         "got {err:?}"
@@ -455,8 +478,13 @@ async fn an_alg_that_contradicts_the_did_fails() {
     );
     let (input, signature) = forge(&signer, &value).await;
 
-    let err = verify_request(&parts(), &input, &signature, &VerifyOptions::aqua_internal())
-        .unwrap_err();
+    let err = verify_request(
+        &parts(),
+        &input,
+        &signature,
+        &VerifyOptions::aqua_internal(),
+    )
+    .unwrap_err();
     assert!(
         matches!(err, HttpSigError::AlgMismatch { .. }),
         "got {err:?}"
@@ -477,9 +505,17 @@ async fn a_signature_tagged_for_another_application_fails() {
     );
     let (input, signature) = forge(&signer, &value).await;
 
-    let err = verify_request(&parts(), &input, &signature, &VerifyOptions::aqua_internal())
-        .unwrap_err();
-    assert!(matches!(err, HttpSigError::TagMismatch { .. }), "got {err:?}");
+    let err = verify_request(
+        &parts(),
+        &input,
+        &signature,
+        &VerifyOptions::aqua_internal(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, HttpSigError::TagMismatch { .. }),
+        "got {err:?}"
+    );
 }
 
 // ── web-bot-auth interop profile ────────────────────────────────────────
@@ -601,5 +637,8 @@ async fn the_signed_base_matches_an_independently_built_one() {
         )
         .unwrap();
     assert!(aqua_auth::verify_caip122(signer.signer_did(), &base, &bytes).unwrap());
-    assert!(!base.ends_with('\n'), "the base must not end with a newline");
+    assert!(
+        !base.ends_with('\n'),
+        "the base must not end with a newline"
+    );
 }

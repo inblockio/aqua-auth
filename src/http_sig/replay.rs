@@ -119,11 +119,7 @@ impl NonceReplayGuard {
         let victim = self
             .seen
             .iter()
-            .min_by(|a, b| {
-                a.value()
-                    .cmp(b.value())
-                    .then_with(|| a.key().cmp(b.key()))
-            })
+            .min_by(|a, b| a.value().cmp(b.value()).then_with(|| a.key().cmp(b.key())))
             .map(|entry| entry.key().clone());
         if let Some(nonce) = victim {
             self.seen.remove(&nonce);
@@ -169,7 +165,9 @@ mod tests {
     #[test]
     fn the_same_nonce_twice_is_rejected() {
         let guard = NonceReplayGuard::new();
-        guard.check_and_record_at("nonce-a", NOW + 300, NOW).unwrap();
+        guard
+            .check_and_record_at("nonce-a", NOW + 300, NOW)
+            .unwrap();
         let err = guard
             .check_and_record_at("nonce-a", NOW + 300, NOW + 1)
             .unwrap_err();
@@ -192,7 +190,9 @@ mod tests {
     fn an_empty_guard_reports_empty() {
         let guard = NonceReplayGuard::new();
         assert!(guard.is_empty());
-        guard.check_and_record_at("nonce-a", NOW + 300, NOW).unwrap();
+        guard
+            .check_and_record_at("nonce-a", NOW + 300, NOW)
+            .unwrap();
         assert!(!guard.is_empty());
     }
 
@@ -255,7 +255,9 @@ mod tests {
     #[test]
     fn the_soonest_expiring_entry_is_evicted_when_still_full() {
         let guard = NonceReplayGuard::with_capacity(2);
-        guard.check_and_record_at("soonest", NOW + 100, NOW).unwrap();
+        guard
+            .check_and_record_at("soonest", NOW + 100, NOW)
+            .unwrap();
         guard.check_and_record_at("later", NOW + 900, NOW).unwrap();
 
         // Nothing is expired at NOW, so a third entry must displace the one

@@ -309,7 +309,9 @@ pub enum HttpSigError {
     },
 
     /// `created` is further in the future than the configured clock skew allows.
-    #[error("signature created at {created} is beyond the accepted skew (now {now}, skew {skew}s)")]
+    #[error(
+        "signature created at {created} is beyond the accepted skew (now {now}, skew {skew}s)"
+    )]
     CreatedInFuture {
         /// The `created` parameter.
         created: i64,

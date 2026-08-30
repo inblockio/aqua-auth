@@ -13,12 +13,12 @@ Three first-class DID namespaces, all on by default:
 The two non-EVM namespaces are Aqua extensions to CAIP-122. See [`SPEC.md`](SPEC.md) for the authoritative wire contract.
 
 **Two spellings, two principals (#182, ruled 2026-08-06).** An ed25519/P-256 key has two
-accepted login DIDs — its `did:key` form and its `did:pkh:{ed25519,p256}` form. Both are valid,
+accepted login DIDs: its `did:key` form and its `did:pkh:{ed25519,p256}` form. Both are valid,
 and they are **distinct principals**: the storage layer (`canonical_trust_key`) keys them
 separately, so each spelling has its own grant bucket. Logging in under one spelling then the
-other returns a **different set of resources** — this is intended, not a bug. If a user reports
+other returns a **different set of resources**; this is intended, not a bug. If a user reports
 "my files disappeared" after switching login method, that is this behaviour (they authenticated
-as a different principal), not a regression — do **not** re-open #182.
+as a different principal), not a regression; do **not** re-open #182.
 
 ## Quick start
 
@@ -59,7 +59,8 @@ The signer supplies the DID, so there is no separate `did` argument to get out o
 
 1. `GET /auth/challenge?did=<did>` returns a [`ChallengeEnvelope`].
 2. Before signing, the client checks that the identifier embedded in the SIWE message body matches the DID's expected identifier. A mismatch returns `AuthClientError::MessageIdentifierMismatch` without invoking the signer (defense in depth).
-3. `POST /auth/session` exchanges the signed challenge for a [`SessionResponse`].
+3. Also before signing, the client checks that the message's `URI:` line has the same origin (scheme, host, port) as the `base_url` it dialed. A mismatch returns `AuthClientError::UriOriginMismatch` without invoking the signer, so a compromised endpoint cannot relay another service's challenge to a headless client.
+4. `POST /auth/session` exchanges the signed challenge for a [`SessionResponse`].
 
 ### Server (with the `http` feature)
 
@@ -126,6 +127,7 @@ Every Aqua service that exposes `/auth/challenge` + `/auth/session` MUST emit th
 | `http` | off | The session/auth layer: CAIP-122 message construction (`message`: `build_message`, `MessageParams`), the on-wire shapes (`wire`: `ChallengeEnvelope`, `SessionRequest`, `SessionResponse`), session/challenge types (`types`), and the in-memory `ChallengeStore` / `SessionStore`. Pulls in `rand`, `serde_json`, `chrono`, `dashmap`, `tokio`. |
 | `client` | off | Implies `http`. Adds `aqua_auth::client::authenticate()` plus the `reqwest` transport dependency. |
 | `webauthn` | off | Standalone P-256 WebAuthn assertion verifier (`verify_webauthn_assertion`, `WebAuthnAssertionParams`). Pulls in `sha2`, `base64`, `serde_json`. Independent of `http`. |
+| `http-sig` | off | **Experimental.** RFC 9421 HTTP Message Signatures for per-request service-to-service and agent auth: `sign_request` / `verify_request` with an Aqua-internal profile (DID in `keyid`, verification returns a `Principal`, no key directory needed) and a `web-bot-auth` interop profile (draft-meunier, Ed25519, JWK-thumbprint `keyid`). Tracks an IETF draft and is exempt from the semver stability promise. Pulls in `sfv`, `base64`, `rand`, `dashmap`. |
 
 Only the crypto/DID primitives are unconditionally compiled: the `CipherSuite` and `DIDMethod` registries, the `did`/`did_method`/`key`/`peer`/`pkh` verifier modules, DID parsing and EIP-55 helpers in `did`, and `verify_caip122`. Everything else (`message`, `wire`, `ChallengeStore`, `SessionStore`) lives behind `http`. Per-namespace gating is deliberately not offered: a service that accepts Aqua CAIP-122 accepts all three namespaces, full stop.
 
@@ -162,9 +164,16 @@ When to reach for which:
 - **`aqua-auth`** for service-to-service auth inside the Aqua ecosystem. No human in the loop. Opaque bearer tokens.
 - **`siwx-oidc`** for federated end-user identity. Standard OIDC tokens. Browser or headless CLI client.
 
+## Workspace
+
+This repository is a two-member Cargo workspace:
+
+- **`aqua-auth`** (root): everything described above.
+- **[`aqua-auth-directory`](aqua-auth-directory/)** (0.x, experimental): public-key advertisement for services that expose a key directory. Renders the JWKS document per draft-meunier-webbotauth-httpsig-directory at `/.well-known/http-message-signatures-directory` (so Aqua agents signing with the `web-bot-auth` interop profile are verifiable by Cloudflare/Akamai-class infrastructure) plus an Aqua-native `/.well-known/aqua-identity` document. Public keys only, with validity windows and rotation overlap; key custody stays with each service's `Signer`. Versioned independently so IETF draft churn never breaks `aqua-auth` semver.
+
 ## Status
 
-`0.2.0`. API stable enough to depend on; major version bump will signal a wire-format break (none planned).
+`0.5.0`, active development. Versions stay below 1.0 deliberately; minor bumps may break (see [`CHANGELOG.md`](CHANGELOG.md)). The CAIP-122 wire contract in [`SPEC.md`](SPEC.md) is stable; the `http-sig` feature and the directory crate track IETF drafts and are explicitly experimental.
 
 ## License
 

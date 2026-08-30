@@ -1,4 +1,4 @@
-//! SessionStore — in-memory store for authenticated sessions.
+//! SessionStore: in-memory store for authenticated sessions.
 //!
 //! Sessions have a 1-hour TTL. A background tokio task sweeps expired
 //! sessions every 60 seconds.
@@ -21,7 +21,7 @@
 //!   reject legitimate re-logins from an active user.
 //!
 //! Sessions can also be revoked directly ([`SessionStore::revoke`],
-//! [`SessionStore::revoke_all_for_did`]) — e.g. for `POST /auth/logout`.
+//! [`SessionStore::revoke_all_for_did`]), e.g. for `POST /auth/logout`.
 //! Revocation removes the session outright, so `validate` fails immediately
 //! afterward (same code path as an unknown token).
 
@@ -85,7 +85,7 @@ impl SessionStore {
     ///
     /// At the global capacity, expired sessions are purged first; if the
     /// store is still full the new session is rejected with
-    /// [`AuthError::SessionStoreFull`] — active authenticated sessions are
+    /// [`AuthError::SessionStoreFull`]; active authenticated sessions are
     /// never evicted to make room. Independently, if `did` already holds
     /// `max_sessions_per_did` sessions, its own oldest session is evicted to
     /// make room for the new one (bounds per-identity session farming).
@@ -125,7 +125,7 @@ impl SessionStore {
     /// If `did` is already at (or over) `max_sessions_per_did`, evict its
     /// single oldest session (by `created_at`, ties broken by token) to make
     /// room. A no-op when `did` is under quota. Never touches another DID's
-    /// sessions — only bounds a single identity's own session count.
+    /// sessions; only bounds a single identity's own session count.
     fn enforce_per_did_cap(&self, did: &str) {
         let mut this_did: Vec<(String, u64)> = self
             .sessions

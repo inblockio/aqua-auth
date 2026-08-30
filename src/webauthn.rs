@@ -22,7 +22,7 @@ pub struct WebAuthnAssertionParams<'a> {
     pub signature: &'a [u8],
     /// The expected challenge bytes (arbitrary length)
     pub expected_challenge: &'a [u8],
-    /// The expected origin (e.g. "https://auth.example.com")
+    /// The expected origin (e.g. `https://auth.example.com`)
     pub expected_origin: &'a str,
     /// The expected relying party ID (e.g. "auth.example.com")
     pub expected_rp_id: &'a str,
@@ -383,10 +383,9 @@ mod tests {
         // Tampered signature may result in either Ok(false) or Err depending on
         // whether the flipped bytes still form a valid curve point encoding.
         // Both outcomes are acceptable - the key point is it must NOT return Ok(true).
-        let result = verify_webauthn_assertion(&params);
-        match result {
-            Ok(valid) => assert!(!valid, "tampered signature must not verify as valid"),
-            Err(_) => {} // structural invalidity is also acceptable
+        // An Err is also acceptable (structural invalidity); only Ok(true) fails.
+        if let Ok(valid) = verify_webauthn_assertion(&params) {
+            assert!(!valid, "tampered signature must not verify as valid");
         }
     }
 }

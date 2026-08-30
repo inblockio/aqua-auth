@@ -1,13 +1,13 @@
-//! #167 item #10 — the scoped-self `Principal` type + `authenticate()`.
+//! #167 item #10; the scoped-self `Principal` type + `authenticate()`.
 //!
-//! aqua-auth authenticates (returns *who signed*); it does NOT store sessions —
+//! aqua-auth authenticates (returns *who signed*); it does NOT store sessions;
 //! aqua-node takes the `Principal` and persists the session. A `Principal` can
 //! only be constructed by successful authentication or explicit validation, and
 //! carries NO delegation state, so an impersonated identity is unrepresentable.
 
-use aqua_auth::{authenticate, CryptoError, Principal, DIDMethod};
+use aqua_auth::{authenticate, CryptoError, Principal};
 
-/// Produce a valid CAIP-122 (eip155 personal_sign) signature — mirrors the
+/// Produce a valid CAIP-122 (eip155 personal_sign) signature; mirrors the
 /// `dispatch_eip155` pattern in lib.rs. Returns the signer's did:pkh and the
 /// 65-byte signature.
 fn signed_eip155(msg: &str) -> (String, Vec<u8>) {
@@ -43,7 +43,7 @@ fn authenticate_returns_the_signing_principal_for_a_valid_signature() {
     assert_eq!(
         principal.did(),
         did,
-        "the principal IS the DID that signed — no actor/delegate indirection"
+        "the principal IS the DID that signed; no actor/delegate indirection"
     );
 }
 
@@ -63,10 +63,8 @@ fn authenticate_rejects_a_tampered_message_as_invalid_signature() {
 #[test]
 fn from_trusted_did_accepts_recognised_methods_and_rejects_unknown() {
     assert!(
-        Principal::from_trusted_did(
-            "did:pkh:eip155:1:0x1111111111111111111111111111111111111111"
-        )
-        .is_ok(),
+        Principal::from_trusted_did("did:pkh:eip155:1:0x1111111111111111111111111111111111111111")
+            .is_ok(),
         "did:pkh:eip155 is a recognised method"
     );
     assert!(

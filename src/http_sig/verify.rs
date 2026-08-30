@@ -13,8 +13,8 @@
 //! profile before the signature is even looked at.
 
 use super::base::{
-    build_signature_base, check_signature_agent_coverage, signature_input_header,
-    SignatureParams, ALLOWED_COMPONENTS, COMPONENT_AUTHORITY, PARAM_ORDER,
+    build_signature_base, check_signature_agent_coverage, signature_input_header, SignatureParams,
+    ALLOWED_COMPONENTS, COMPONENT_AUTHORITY, PARAM_ORDER,
 };
 use super::{
     alg_for_did, unix_now, HttpSigError, NonceReplayGuard, RequestParts, DEFAULT_CLOCK_SKEW,
@@ -224,9 +224,7 @@ fn integer_param(params: &sfv::Parameters, name: &str) -> Result<i64, HttpSigErr
         .get(name)
         .and_then(|value| value.as_integer())
         .map(i64::from)
-        .ok_or_else(|| {
-            HttpSigError::MalformedSignatureInput(format!("{name} must be an integer"))
-        })
+        .ok_or_else(|| HttpSigError::MalformedSignatureInput(format!("{name} must be an integer")))
 }
 
 fn string_param(params: &sfv::Parameters, name: &str) -> Result<String, HttpSigError> {
@@ -1190,7 +1188,11 @@ mod tests {
             NOW + 1
         )
         .is_err());
-        assert_eq!(guard.len(), 0, "a rejected signature must not record a nonce");
+        assert_eq!(
+            guard.len(),
+            0,
+            "a rejected signature must not record a nonce"
+        );
 
         // The genuine request still goes through.
         assert!(verify_request_at(
