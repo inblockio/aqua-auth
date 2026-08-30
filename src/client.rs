@@ -6,6 +6,7 @@
 use crate::auth_error::AuthError;
 use crate::did::identifier_from_message;
 use crate::did_method::find_did_method;
+use crate::signer::Signer;
 use crate::types::Session;
 use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 
@@ -17,35 +18,37 @@ use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 /// returns [`SessionResponse`]. Both are defined in [`crate::wire`].
 ///
 /// 1. `GET /auth/challenge?did=<did>` -- obtain a [`ChallengeEnvelope`]
-/// 2. Sign the challenge message using the provided `sign_fn`
+/// 2. Check the challenge, then sign it with `signer` (see below)
 /// 3. `POST /auth/session` -- exchange signed challenge for a [`SessionResponse`],
 ///    translated into the internal [`Session`] type for callers
 ///
-/// The `sign_fn` takes the canonical CAIP-122 message and returns
-/// the hex-encoded signature (with or without `0x` prefix).
+/// The DID is read from [`Signer::signer_did`] rather than passed separately,
+/// so pairing a message with the wrong identity is unrepresentable. Signing is
+/// asynchronous because production key custody waits on something external: a
+/// KMS or HSM round trip, a wallet prompt, a passkey touch. The raw signature
+/// bytes the signer returns are hex-encoded with an `0x` prefix for the wire.
 ///
 /// # Challenge binding
 ///
 /// Before signing, the returned message is checked against what the client
-/// asked for: its identifier line must match the identifier derived from
-/// `did`, and its `URI:` line must have the same origin as `base_url` (scheme,
-/// host, port; paths ignored). Either mismatch refuses to sign. This kills the
-/// relay: a compromised endpoint that forwards a challenge minted for another
-/// aqua service presents a message whose URI origin is that service's, not the
-/// origin the client dialed, so the client never signs it. The `domain` line is
-/// not enforced, because it is a free-form label (deployed servers use
+/// asked for: its identifier line must match the identifier derived from the
+/// signer's DID, and its `URI:` line must have the same origin as `base_url`
+/// (scheme, host, port; paths ignored). Either mismatch refuses to sign. This
+/// kills the relay: a compromised endpoint that forwards a challenge minted for
+/// another aqua service presents a message whose URI origin is that service's,
+/// not the origin the client dialed, so the client never signs it. The `domain`
+/// line is not enforced, because it is a free-form label (deployed servers use
 /// non-hostnames such as `aqua-node`).
-pub async fn authenticate<F>(
+pub async fn authenticate(
     http: &reqwest::Client,
     base_url: &str,
-    did: &str,
-    sign_fn: F,
-) -> Result<Session, AuthClientError>
-where
-    F: FnOnce(&str) -> Result<String, Box<dyn std::error::Error + Send + Sync>>,
-{
+    signer: &dyn Signer,
+) -> Result<Session, AuthClientError> {
     // 1. Request challenge
-    let challenge_url = format!("{base_url}/auth/challenge?did={}", urlencoded(did));
+    let challenge_url = format!(
+        "{base_url}/auth/challenge?did={}",
+        urlencoded(signer.signer_did())
+    );
     let envelope: ChallengeEnvelope = http
         .get(&challenge_url)
         .send()
@@ -57,8 +60,48 @@ where
         .await
         .map_err(AuthClientError::Http)?;
 
-    // 1a. Defense in depth: verify the identifier embedded in the SIWE
-    //     message matches the identifier derived from the requested DID.
+    // 2. Check the challenge and sign it
+    let req = signed_session_request(envelope, base_url, signer).await?;
+
+    // 3. Exchange for session
+    let session_url = format!("{base_url}/auth/session");
+
+    let resp: SessionResponse = http
+        .post(&session_url)
+        .json(&req)
+        .send()
+        .await
+        .map_err(AuthClientError::Http)?
+        .error_for_status()
+        .map_err(AuthClientError::Http)?
+        .json()
+        .await
+        .map_err(AuthClientError::Http)?;
+
+    Ok(Session {
+        did: resp.did,
+        token: resp.token,
+        valid_until: resp.valid_until,
+        created_at: resp.created_at,
+    })
+}
+
+/// Everything between receiving a challenge and posting a session: the two
+/// binding checks, the signature, and the request body.
+///
+/// Split out of [`authenticate`] so the security-critical part of the flow is
+/// reachable from a unit test with a plain [`ChallengeEnvelope`] value, leaving
+/// `authenticate` as the thin HTTP wrapper. Both checks run before signing, so
+/// a challenge this client did not ask for never reaches the key.
+async fn signed_session_request(
+    envelope: ChallengeEnvelope,
+    base_url: &str,
+    signer: &dyn Signer,
+) -> Result<SessionRequest, AuthClientError> {
+    let did = signer.signer_did();
+
+    // 1. Defense in depth: verify the identifier embedded in the SIWE
+    //    message matches the identifier derived from the requested DID.
     let method = find_did_method(did).ok_or_else(|| {
         AuthClientError::Auth(
             crate::crypto_error::CryptoError::UnsupportedMethod(did.to_string()).into(),
@@ -80,38 +123,21 @@ where
         });
     }
 
-    // 1b. Bind the challenge to the endpoint we actually dialed: the message's
-    //     URI origin must be ours, or a relayed challenge would get signed.
+    // 2. Bind the challenge to the endpoint we actually dialed: the message's
+    //    URI origin must be ours, or a relayed challenge would get signed.
     verify_uri_binding(&envelope.message, base_url)?;
 
-    // 2. Sign the message
-    let signature = sign_fn(&envelope.message).map_err(|e| AuthClientError::Sign(e.to_string()))?;
+    // 3. Sign the message. Awaited: the backend may be a KMS, an HSM, or a
+    //    wallet prompt, none of which return synchronously.
+    let sig_bytes = signer
+        .sign(&envelope.message)
+        .await
+        .map_err(|e| AuthClientError::Sign(e.to_string()))?;
 
-    // 3. Exchange for session
-    let session_url = format!("{base_url}/auth/session");
-    let req = SessionRequest {
+    Ok(SessionRequest {
         did: did.to_string(),
         nonce: envelope.nonce,
-        signature,
-    };
-
-    let resp: SessionResponse = http
-        .post(&session_url)
-        .json(&req)
-        .send()
-        .await
-        .map_err(AuthClientError::Http)?
-        .error_for_status()
-        .map_err(AuthClientError::Http)?
-        .json()
-        .await
-        .map_err(AuthClientError::Http)?;
-
-    Ok(Session {
-        did: resp.did,
-        token: resp.token,
-        valid_until: resp.valid_until,
-        created_at: resp.created_at,
+        signature: format!("0x{}", hex::encode(sig_bytes)),
     })
 }
 
@@ -370,5 +396,192 @@ mod tests {
         let msg = message_with_uri("https://timestamp.inblock.io");
         assert!(msg.starts_with("aqua-node wants you to sign in"));
         assert!(verify_uri_binding(&msg, "https://timestamp.inblock.io").is_ok());
+    }
+
+    // --- signed_session_request (the post-challenge seam) ---
+
+    use crate::message::{build_message, MessageParams};
+    use crate::signer::{SignError, Signer};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    const BASE_URL: &str = "https://timestamp.inblock.io";
+
+    /// A local Ed25519 signer that genuinely suspends before producing bytes.
+    ///
+    /// The `sleep` is the point of the type: a synchronous `FnOnce` could not
+    /// express a signer that waits on something external (a KMS round trip, a
+    /// wallet prompt, a passkey touch), so a passing test proves the async path
+    /// is really driven to completion. The call counter lets the refusal tests
+    /// assert that a rejected challenge never reaches the key at all.
+    struct SleepySigner {
+        key: ed25519_dalek::SigningKey,
+        did: String,
+        calls: AtomicUsize,
+    }
+
+    impl SleepySigner {
+        fn generate() -> Self {
+            let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+            let mut bytes = crate::key::ED25519_PREFIX.to_vec();
+            bytes.extend_from_slice(key.verifying_key().as_bytes());
+            let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());
+            Self {
+                key,
+                did,
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl Signer for SleepySigner {
+        fn signer_did(&self) -> &str {
+            &self.did
+        }
+
+        async fn sign(&self, message: &str) -> Result<Vec<u8>, SignError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            use ed25519_dalek::Signer as _;
+            Ok(self.key.sign(message.as_bytes()).to_bytes().to_vec())
+        }
+    }
+
+    /// A signer whose backend is down: proves the error mapping into
+    /// [`AuthClientError::Sign`].
+    struct FailingSigner {
+        did: String,
+    }
+
+    #[async_trait]
+    impl Signer for FailingSigner {
+        fn signer_did(&self) -> &str {
+            &self.did
+        }
+
+        async fn sign(&self, _message: &str) -> Result<Vec<u8>, SignError> {
+            Err(SignError("hsm unreachable".to_string()))
+        }
+    }
+
+    /// Build the envelope a well-behaved server would return for `did`.
+    fn envelope_for(did: &str, uri: &str) -> ChallengeEnvelope {
+        let now = chrono::Utc::now();
+        let message = build_message(&MessageParams {
+            did,
+            domain: "aqua-node",
+            uri,
+            nonce: "0xdeadbeef",
+            issued_at: now,
+            expiration_time: now + chrono::Duration::minutes(5),
+        })
+        .expect("message builds for a supported DID");
+        ChallengeEnvelope {
+            nonce: "0xdeadbeef".to_string(),
+            message,
+            expires_at: 9999999999,
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_session_request_awaits_the_signer_and_verifies() {
+        let signer = SleepySigner::generate();
+        let envelope = envelope_for(signer.signer_did(), BASE_URL);
+        let message = envelope.message.clone();
+
+        let req = signed_session_request(envelope, BASE_URL, &signer)
+            .await
+            .expect("a self-consistent challenge is signable");
+
+        assert_eq!(signer.calls(), 1);
+        assert_eq!(req.did, signer.signer_did());
+        assert_eq!(req.nonce, "0xdeadbeef");
+
+        // Hex with an `0x` prefix is the wire encoding the server decodes.
+        let hex_body = req
+            .signature
+            .strip_prefix("0x")
+            .expect("signature carries the 0x prefix");
+        let sig_bytes = hex::decode(hex_body).expect("signature is hex");
+        assert_eq!(sig_bytes.len(), 64, "raw ed25519 signature");
+        assert!(crate::verify_caip122(signer.signer_did(), &message, &sig_bytes).unwrap());
+    }
+
+    #[tokio::test]
+    async fn signed_session_request_refuses_a_relayed_challenge_unsigned() {
+        // The relay case: the endpoint we dialed hands back a challenge minted
+        // for another service. The key must never see it.
+        let signer = SleepySigner::generate();
+        let envelope = envelope_for(signer.signer_did(), "https://victim.example");
+
+        let err = signed_session_request(envelope, BASE_URL, &signer)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AuthClientError::UriOriginMismatch { .. }));
+        assert_eq!(signer.calls(), 0, "refusal must precede signing");
+    }
+
+    #[tokio::test]
+    async fn signed_session_request_refuses_a_foreign_identifier_unsigned() {
+        // The message names someone else's key, so signing it would prove
+        // possession of a message we did not ask for.
+        let signer = SleepySigner::generate();
+        let other = SleepySigner::generate();
+        let envelope = envelope_for(other.signer_did(), BASE_URL);
+
+        let err = signed_session_request(envelope, BASE_URL, &signer)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            AuthClientError::MessageIdentifierMismatch { .. }
+        ));
+        assert_eq!(signer.calls(), 0, "refusal must precede signing");
+    }
+
+    #[tokio::test]
+    async fn signed_session_request_maps_signer_failure_to_sign_error() {
+        let good = SleepySigner::generate();
+        let broken = FailingSigner {
+            did: good.signer_did().to_string(),
+        };
+        let envelope = envelope_for(broken.signer_did(), BASE_URL);
+
+        let err = signed_session_request(envelope, BASE_URL, &broken)
+            .await
+            .unwrap_err();
+
+        match err {
+            AuthClientError::Sign(msg) => assert!(msg.contains("hsm unreachable"), "got {msg}"),
+            other => panic!("expected Sign, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_session_request_rejects_an_unsupported_did_method() {
+        let signer = FailingSigner {
+            did: "did:pkh:solana:0xabc".to_string(),
+        };
+        // The identifier line is irrelevant here: the DID never resolves to a
+        // method, so the check cannot even compute what to expect.
+        let envelope = ChallengeEnvelope {
+            nonce: "0xdeadbeef".to_string(),
+            message: message_with_uri(BASE_URL),
+            expires_at: 9999999999,
+        };
+
+        let err = signed_session_request(envelope, BASE_URL, &signer)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AuthClientError::Auth(_)), "got {err:?}");
     }
 }

@@ -25,21 +25,35 @@ as a different principal), not a regression — do **not** re-open #182.
 ### Client (with the `client` feature)
 
 ```rust
-use aqua_auth::client::authenticate;
+use aqua_auth::{client::authenticate, SignError, Signer};
+use async_trait::async_trait;
+
+// Implement `Signer` once for however you hold the key: a local keypair, a
+// KMS or HSM client, a wallet prompt, a passkey. It carries its own DID.
+struct MySigner { /* ... */ }
+
+#[async_trait]
+impl Signer for MySigner {
+    fn signer_did(&self) -> &str { "did:pkh:eip155:1:0x..." }
+
+    async fn sign(&self, message: &str) -> Result<Vec<u8>, SignError> {
+        // Raw signature bytes: 65-byte EIP-191 for eip155, 64-byte for
+        // ed25519 and p256. The client hex-encodes them for the wire.
+        Ok(self.backend.sign(message).await?)
+    }
+}
 
 let session = authenticate(
     &reqwest::Client::new(),
     "https://timestamp.inblock.io",
-    "did:pkh:eip155:1:0x...",
-    |message: &str| {
-        // sign `message` with your CAIP-122 key, return hex
-        Ok(my_signer.sign(message)?)
-    },
+    &MySigner::new(),
 )
 .await?;
 
 // session.token is an opaque Bearer; attach it as Authorization: Bearer <token>
 ```
+
+The signer supplies the DID, so there is no separate `did` argument to get out of sync with the key.
 
 `authenticate()` does the full two-roundtrip handshake:
 
