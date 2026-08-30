@@ -160,10 +160,14 @@ fn verify_uri_binding(message: &str, base_url: &str) -> Result<(), AuthClientErr
 }
 
 /// Value of the `URI: ` line of a CAIP-122 message, if present and non-empty.
+///
+/// The prefix must start the line, as CAIP-122 and SIWE specify. Matching an
+/// indented occurrence would let the free-form statement block shadow the real
+/// header line, so anything else fails closed.
 fn uri_line(message: &str) -> Option<&str> {
     message
         .split('\n')
-        .find_map(|line| line.trim_end_matches('\r').trim().strip_prefix("URI:"))
+        .find_map(|line| line.trim_end_matches('\r').strip_prefix("URI:"))
         .map(str::trim)
         .filter(|uri| !uri.is_empty())
 }
@@ -330,6 +334,17 @@ mod tests {
     fn uri_binding_message_uri_without_host_fails_closed() {
         let msg = message_with_uri("file:///etc/passwd");
         assert_mismatch(verify_uri_binding(&msg, "https://example.com"));
+    }
+
+    #[test]
+    fn uri_binding_indented_uri_line_does_not_count() {
+        // Only a line that starts with `URI:` is the header line; an indented
+        // one lives in the free-form statement block and must not satisfy the
+        // check.
+        // Written on one line: a trailing `\` in a Rust string literal also
+        // eats the next line's leading whitespace, which would defeat the test.
+        let msg = "aqua-node wants you to sign in with your Ed25519 account:\n0xaabb\n\n  URI: https://example.com\n\nVersion: 1";
+        assert_mismatch(verify_uri_binding(msg, "https://example.com"));
     }
 
     #[test]
