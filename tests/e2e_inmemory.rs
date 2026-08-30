@@ -125,17 +125,52 @@ async fn login(peer: &AquaPeer, signer: &dyn Signer) -> SessionResponse {
     body_json(response).await
 }
 
-#[tokio::test]
-async fn ed25519_did_key_logs_in_end_to_end() {
-    let signer = signers::ed25519_did_key();
+// ── the five-spelling login matrix ──────────────────────────────────────
+//
+// One key type can be spelled two ways (did:key and did:pkh) and those are two
+// distinct principals, not one folded identity (#182). Both spellings must log
+// in, and each must come back as the DID it presented, never normalised to the
+// other.
+
+/// Log in, then prove the token names the same DID at `/whoami`.
+async fn assert_login_matrix(signer: Arc<dyn Signer>) {
     let peer = peer(signer.clone());
 
     let session = login(&peer, &*signer).await;
-    assert_eq!(session.did, signer.signer_did());
+    assert_eq!(
+        session.did,
+        signer.signer_did(),
+        "the session must name the DID that signed, unmodified"
+    );
     assert!(!session.token.is_empty());
 
     let response = whoami(&peer, &session.token).await;
     assert_eq!(response.status(), StatusCode::OK);
     let who: serde_json::Value = body_json(response).await;
     assert_eq!(who["did"], signer.signer_did());
+}
+
+#[tokio::test]
+async fn ed25519_did_key_logs_in_end_to_end() {
+    assert_login_matrix(signers::ed25519_did_key()).await;
+}
+
+#[tokio::test]
+async fn ed25519_did_pkh_logs_in_end_to_end() {
+    assert_login_matrix(signers::ed25519_did_pkh()).await;
+}
+
+#[tokio::test]
+async fn p256_did_key_logs_in_end_to_end() {
+    assert_login_matrix(signers::p256_did_key()).await;
+}
+
+#[tokio::test]
+async fn p256_did_pkh_logs_in_end_to_end() {
+    assert_login_matrix(signers::p256_did_pkh()).await;
+}
+
+#[tokio::test]
+async fn eip155_did_pkh_logs_in_end_to_end() {
+    assert_login_matrix(signers::eip155()).await;
 }
