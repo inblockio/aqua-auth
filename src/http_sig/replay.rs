@@ -5,7 +5,7 @@
 //! every nonce already accepted closes that, at the cost of state the verifier
 //! has to hold.
 //!
-//! Same hygiene pattern as [`crate::ChallengeStore`]: `DashMap`-backed, hard
+//! Same hygiene pattern as `ChallengeStore` (the `http` feature): `DashMap`-backed, hard
 //! capacity cap, expired entries purged before anything live is evicted.
 //! Note the direction of the relationship though. `ChallengeStore` *issues*
 //! nonces and consumes them once; this guard never issues anything, it only

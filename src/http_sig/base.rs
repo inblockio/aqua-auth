@@ -82,10 +82,7 @@ pub(crate) fn authority_from_uri(target_uri: &str) -> Result<String, HttpSigErro
     };
 
     // The authority runs to the first path, query, or fragment delimiter.
-    let authority = rest
-        .split(|c| c == '/' || c == '?' || c == '#')
-        .next()
-        .unwrap_or("");
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let authority = match authority.rsplit_once('@') {
         Some((_userinfo, host_port)) => host_port,
         None => authority,

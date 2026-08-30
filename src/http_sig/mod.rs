@@ -60,9 +60,40 @@
 //!
 //! Server-issued nonces via `Accept-Signature` and RFC 9421 signed *responses*
 //! (mutual authentication) are out of scope for now. When `Accept-Signature`
-//! arrives, [`crate::ChallengeStore`] is the store that should issue those
-//! nonces; the replay guard in this module only remembers nonces it has
-//! already seen, it never issues them.
+//! arrives, `ChallengeStore` (the `http` feature) is the store that issues those
+//! nonces; [`NonceReplayGuard`] only remembers nonces it has already seen, it
+//! never issues them.
+//!
+//! Verifying a [`Profile::WebBotAuth`] signature is also out of scope here:
+//! its `keyid` is a JWK thumbprint, and turning a thumbprint back into a key
+//! needs a key directory. [`verify_request`] therefore only completes for a
+//! `keyid` that is a DID.
+//!
+//! ## Example
+//!
+//! ```no_run
+//! use aqua_auth::http_sig::{sign_request, verify_request, Profile, RequestParts, VerifyOptions};
+//! use aqua_auth::Signer;
+//! use std::time::Duration;
+//!
+//! # async fn example(signer: &dyn Signer) -> Result<(), Box<dyn std::error::Error>> {
+//! let parts = RequestParts::new("GET", "https://node.example.com/v1/trees");
+//!
+//! // Client: attach these two header values to the request.
+//! let headers =
+//!     sign_request(signer, &parts, &Profile::AquaInternal, Duration::from_secs(300)).await?;
+//!
+//! // Server: rebuild the same RequestParts from the request as received.
+//! let principal = verify_request(
+//!     &parts,
+//!     &headers.signature_input,
+//!     &headers.signature,
+//!     &VerifyOptions::aqua_internal(),
+//! )?;
+//! println!("request signed by {}", principal.did());
+//! # Ok(())
+//! # }
+//! ```
 
 mod base;
 mod replay;

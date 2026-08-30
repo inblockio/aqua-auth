@@ -15,6 +15,12 @@
 //!
 //! **`client` feature (implies `http`):**
 //! - reqwest-based challenge-response authentication flow
+//!
+//! **`http-sig` feature (per-request signatures, EXPERIMENTAL):**
+//! - RFC 9421 HTTP Message Signatures over a narrow profile
+//! - Aqua-internal (DID `keyid`) and web-bot-auth interop profiles
+//! - Tracks an IETF draft, so it is exempt from the semver stability promise
+//!   until that draft settles (see [`http_sig`])
 
 // --- Always available (crypto/DID layer) ---
 pub mod cipher_suite;
@@ -75,6 +81,11 @@ pub mod client;
 // --- Behind `http-sig` feature (RFC 9421 per-request signatures) ---
 #[cfg(feature = "http-sig")]
 pub mod http_sig;
+#[cfg(feature = "http-sig")]
+pub use http_sig::{
+    sign_request, verify_request, HttpSigError, NonceReplayGuard, Profile, RequestParts,
+    SignedHeaders, VerifyOptions,
+};
 
 // --- Behind `webauthn` feature ---
 #[cfg(feature = "webauthn")]
