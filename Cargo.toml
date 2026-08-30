@@ -60,30 +60,12 @@ url = { version = "2", optional = true }
 tokio = { version = "1", features = ["full"] }
 rand = "0.8"
 
-# The end-to-end suites only. The published dependency surface of this crate is
-# unchanged: nothing below is reachable from the library.
-#
-# `tests/harness/` mounts the real stores and verifiers behind an axum Router,
-# and `tower`'s `ServiceExt::oneshot` drives that Router in-process, so the
-# server half runs end to end with no listener and no port. The directory crate
-# is a dev-dependency of its own dependency, which Cargo permits precisely for
-# this case (dev-dependency cycles are allowed).
-axum = "0.8"
-tower = { version = "0.5", features = ["util"] }
-aqua-auth-directory = { path = "aqua-auth-directory" }
-
-# Deterministic simulation testing for `tests/dst_auth.rs`: one process, one
-# simulated network, a fixed seed. `turmoil::net::TcpStream` implements tokio's
-# `AsyncRead`/`AsyncWrite`, which is all the `axum::serve::Listener` glue and
-# the hand-rolled HTTP/1.1 client in that suite need. No hyper or hyper-util
-# dev-dependency is required, because the simulated client speaks the protocol
-# directly instead of driving a hyper client.
-turmoil = "0.7"
-
 # The root package stays in place and remains the default cargo target here, so
 # a bare `cargo test` at the root still means "test aqua-auth". The directory
 # crate is a separate 0.x member on purpose: it tracks an IETF draft, and draft
-# churn must never force a semver bump on this crate.
+# churn must never force a semver bump on this crate. The testkit member
+# (`publish = false`) owns the AquaPeer e2e harness and the e2e suites, so this
+# crate's feature-lane matrix stays exactly the published surface.
 [workspace]
-members = [".", "aqua-auth-directory"]
+members = [".", "aqua-auth-directory", "aqua-auth-testkit"]
 resolver = "2"

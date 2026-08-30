@@ -8,14 +8,11 @@
 //! envelope, sign with a harness signer, POST the signature. Driving the real
 //! reqwest client is `tests/e2e_loopback.rs`'s job, not this suite's.
 //!
-//! **Feature gate.** The harness needs `http` (the stores and the wire types)
-//! and `http-sig` (`verify_request` for `/sig/whoami`). `http-sig` does *not*
-//! imply `http` in `Cargo.toml`, so both are named explicitly. Run with
-//! `cargo test --all-features` or `cargo test --features http,http-sig`.
+//! No feature gate: this crate's dependency on aqua-auth names `http` and
+//! `http-sig` unconditionally, so this suite always compiles and always runs.
+//! Run with `cargo test -p aqua-auth-testkit --test e2e_inmemory`.
 
-#![cfg(all(feature = "http", feature = "http-sig"))]
-
-mod harness;
+use aqua_auth_testkit as harness;
 
 use aqua_auth::http_sig::{sign_request, Profile, RequestParts, SignedHeaders};
 use aqua_auth::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};

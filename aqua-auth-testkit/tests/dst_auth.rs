@@ -41,15 +41,13 @@
 //! `tokio::time`, which turmoil drives from simulated time, so a "1 second"
 //! timeout costs microseconds of real time.
 //!
-//! ## Feature gate
+//! ## No feature gate
 //!
-//! Same gate as `tests/e2e_inmemory.rs`: the harness needs `http` (the stores
-//! and wire types) and `http-sig` (`verify_request`), and `http-sig` does not
-//! imply `http`. Run with `cargo test --all-features --test dst_auth`.
+//! This crate's dependency on aqua-auth names `http` and `http-sig`
+//! unconditionally, so this suite always compiles and always runs. Run with
+//! `cargo test -p aqua-auth-testkit --test dst_auth`.
 
-#![cfg(all(feature = "http", feature = "http-sig"))]
-
-mod harness;
+use aqua_auth_testkit as harness;
 
 use aqua_auth::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 use aqua_auth::Signer;
