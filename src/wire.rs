@@ -3,12 +3,12 @@
 //! These are the JSON shapes that travel over HTTP between client and server.
 //! They are intentionally distinct from the internal types in [`crate::types`]:
 //!
-//! - [`ChallengeEnvelope`] — what the server returns for `GET /auth/challenge`.
+//! - [`ChallengeEnvelope`]: what the server returns for `GET /auth/challenge`.
 //!   Notably absent: `did`. The client supplied the DID in the query string;
 //!   the message body already encodes the identifier. Including `did` in the
 //!   response envelope creates an envelope/body mismatch surface and is omitted.
-//! - [`SessionRequest`] — what the client posts to `POST /auth/session`.
-//! - [`SessionResponse`] — what the server returns from `POST /auth/session`.
+//! - [`SessionRequest`]: what the client posts to `POST /auth/session`.
+//! - [`SessionResponse`]: what the server returns from `POST /auth/session`.
 
 use serde::{Deserialize, Serialize};
 

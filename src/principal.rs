@@ -2,13 +2,13 @@
 //!
 //! aqua-auth's job is to say *who signed*, not to remember them: [`authenticate`]
 //! verifies a CAIP-122 signature and returns a [`Principal`]; aqua-node takes
-//! that `Principal` and creates/stores the session. aqua-auth persists nothing —
+//! that `Principal` and creates/stores the session. aqua-auth persists nothing;
 //! its `SessionStore` is a reusable helper, not the owner of sessions (Dalmas
 //! ownership ruling; doc 01 §2 / doc 04 §2.1).
 //!
 //! A `Principal` can only be constructed by successful [`authenticate`] or by
 //! [`Principal::from_trusted_did`] (explicit validation), so an unauthenticated
-//! string is not a `Principal`. It holds only the DID that signed — there is
+//! string is not a `Principal`. It holds only the DID that signed; there is
 //! deliberately **no `actor_did` / `delegated_role`**, so an impersonated or
 //! delegated identity is *unrepresentable* rather than merely discouraged
 //! (Dalmas scoped-self ruling, via #164): a delegate logs in as its own DID and
@@ -16,7 +16,7 @@
 //!
 //! Spec: `docs/superpowers/specs/2026-08-05-principal-and-auth-consolidation-design.md`.
 //! Deviation from that spec: it typed the identity as `Principal { did, curve:
-//! DidCurve }`, but the merged did:key work never introduced a `DidCurve` enum —
+//! DidCurve }`, but the merged did:key work never introduced a `DidCurve` enum;
 //! the `DIDMethod` registry is the single source of the method/curve. `Principal`
 //! therefore stores the DID and defers method/subject questions to the registry
 //! (`method_label`, `canonical_subject`), rather than duplicating that knowledge.
@@ -24,7 +24,7 @@
 use crate::crypto_error::CryptoError;
 use crate::did_method::{find_did_method, DIDMethod};
 
-/// A verified, scoped-self authenticated identity — the DID that signed.
+/// A verified, scoped-self authenticated identity: the DID that signed.
 ///
 /// Construct only via [`authenticate`] (proof of possession) or
 /// [`Principal::from_trusted_did`] (explicit validation of an already-trusted
@@ -37,7 +37,7 @@ pub struct Principal {
 impl Principal {
     /// Validate a DID string into a `Principal` **without** proof of possession.
     ///
-    /// Use only where the DID is already trusted — e.g. re-hydrating a
+    /// Use only where the DID is already trusted, e.g. re-hydrating a
     /// `Principal` from an aqua-node-owned session record. Fails with
     /// [`CryptoError::UnsupportedMethod`] if no `DIDMethod` recognises it, so an
     /// unknown or malformed method cannot become a `Principal`.
@@ -46,14 +46,14 @@ impl Principal {
         Ok(Self { did: did.to_string() })
     }
 
-    /// The complete DID that signed — the identity of record.
+    /// The complete DID that signed: the identity of record.
     pub fn did(&self) -> &str {
         &self.did
     }
 
     /// The registry's machine label for this DID's method (e.g. `eip155`,
     /// `ed25519`, `p256`). The stand-in for the spec's `curve`, sourced from the
-    /// one authority — the `DIDMethod` registry.
+    /// one authority, the `DIDMethod` registry.
     pub fn method_label(&self) -> Result<&'static str, CryptoError> {
         self.method()?.method_label(&self.did)
     }
@@ -72,7 +72,7 @@ impl Principal {
 /// Log a user in: verify a CAIP-122 signature and return the authenticated
 /// [`Principal`].
 ///
-/// This is the proof-of-possession entry point — the returned `Principal` has
+/// This is the proof-of-possession entry point; the returned `Principal` has
 /// demonstrably signed `message`. aqua-node then creates a session from it;
 /// aqua-auth stores nothing. A thin, typed wrapper over [`crate::verify_caip122`]:
 /// verify → build the `Principal` on success, [`CryptoError::InvalidSignature`]

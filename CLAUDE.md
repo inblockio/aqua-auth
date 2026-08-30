@@ -26,13 +26,13 @@ Three DID namespaces via `CipherSuite` and `DIDMethod` trait registries:
 | `ed25519` | `did:key:z6Mk...` **and** `did:pkh:ed25519:0x{pubkey}` | ed25519-dalek |
 | `p256` | `did:key:zDn...` **and** `did:pkh:p256:0x{compressed}` | P-256 ECDSA |
 
-**Two spellings, two principals — deliberate (#182, ruled 2026-08-06).** An ed25519/P-256
+**Two spellings, two principals: deliberate (#182, ruled 2026-08-06).** An ed25519/P-256
 key may log in as either its `did:key` form or its `did:pkh:{ed25519,p256}` form; **both are
-accepted**, and they are **distinct principals** — `canonical_trust_key` keys them separately,
+accepted**, and they are **distinct principals**; `canonical_trust_key` keys them separately,
 so each spelling has its own grant bucket. A key that uses both spellings therefore holds two
 independent identities. This is intentional: they are NOT folded to one principal. (Considered
 and rejected: A-strict, reject the did:pkh spelling; and B-fold, canonicalise it to did:key.
-The ruling is to accept both as-is — see task #182 / `plans/backend-unification/25`.)
+The ruling is to accept both as-is; see task #182 / `plans/backend-unification/25`.)
 
 Additionally, `did:peer` (variants 0 and 2) is supported for DID resolution.
 
@@ -144,7 +144,7 @@ Challenge and session stores must test: creation, validation, TTL expiration, an
 - [ ] crates.io publication prep (README, license file, metadata)
 
 <!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+# GitNexus: Code Intelligence
 
 This project is indexed by GitNexus as **aqua-rs-auth** (243 symbols, 491 relationships, 21 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
@@ -156,13 +156,13 @@ This project is indexed by GitNexus as **aqua-rs-auth** (243 symbols, 491 relati
 - **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 - When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- When you need full context on a specific symbol (callers, callees, which execution flows it participates in), use `gitnexus_context({name: "symbolName"})`.
 
 ## Never Do
 
 - NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER rename symbols with find-and-replace; use `gitnexus_rename` which understands the call graph.
 - NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
 
 ## Resources

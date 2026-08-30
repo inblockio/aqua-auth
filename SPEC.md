@@ -57,10 +57,10 @@ form. The namespace/curve determines which signature algorithm applies.
 | `p256` | `did:key:zDn<multibase>` or `did:pkh:p256:0x<33-byte compressed pubkey hex>` | multibase key (`did:key`) or compressed 33-byte pubkey hex (`did:pkh`) | P-256 ECDSA over raw message bytes (no prefix) | Aqua extension |
 
 > **Two spellings, two principals (#182).** For ed25519/P-256, the `did:key` and
-> `did:pkh` forms of one key are **both accepted** and are **distinct principals** —
+> `did:pkh` forms of one key are **both accepted** and are **distinct principals**;
 > `canonical_trust_key` keys them into separate grant buckets. Switching login spelling
 > returns a different resource set by design. A "my files disappeared" report after a
-> login-method change is this behaviour (a different principal), not a defect — do not
+> login-method change is this behaviour (a different principal), not a defect; do not
 > re-open #182.
 
 **`eip155` DID parsing** (see `src/did.rs`):

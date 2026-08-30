@@ -1,4 +1,4 @@
-//! ChallengeStore — in-memory store for CAIP-122 authentication challenges.
+//! ChallengeStore: in-memory store for CAIP-122 authentication challenges.
 //!
 //! Challenges have a 5-minute TTL. Expired challenges are cleaned up lazily
 //! on access and via the session store's background sweep.
@@ -12,7 +12,7 @@
 //! single oldest-issued challenge is evicted to make room. Challenges are
 //! pre-auth, single-use, and short-TTL by design, so evicting the oldest one
 //! only inconveniences whoever is flooding the endpoint (their oldest
-//! in-flight challenge stops working) — it never touches an established,
+//! in-flight challenge stops working); it never touches an established,
 //! authenticated session. The store is never unbounded.
 
 use crate::auth_error::AuthError;
@@ -316,7 +316,7 @@ mod tests {
     fn purge_expired_before_evicting_oldest() {
         // 0-second TTL: every challenge is immediately expired, so hitting
         // the cap must be resolved by purging (freeing all slots) rather
-        // than evicting a still-pending challenge — there are none left
+        // than evicting a still-pending challenge; there are none left
         // pending once real time has moved past their 1-second TTL.
         let store = ChallengeStore::with_capacity(1, "aqua-node".into(), "http://x".into(), 2);
         let a = store.create(&addr_did(1)).unwrap();
@@ -335,7 +335,7 @@ mod tests {
             1,
             "purge must reclaim expired slots before any eviction"
         );
-        // The purge removed the expired entries outright — neither survives.
+        // The purge removed the expired entries outright; neither survives.
         assert!(store.validate(&a.nonce).is_err());
         assert!(store.validate(&c.nonce).is_ok());
     }

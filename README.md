@@ -13,12 +13,12 @@ Three first-class DID namespaces, all on by default:
 The two non-EVM namespaces are Aqua extensions to CAIP-122. See [`SPEC.md`](SPEC.md) for the authoritative wire contract.
 
 **Two spellings, two principals (#182, ruled 2026-08-06).** An ed25519/P-256 key has two
-accepted login DIDs — its `did:key` form and its `did:pkh:{ed25519,p256}` form. Both are valid,
+accepted login DIDs: its `did:key` form and its `did:pkh:{ed25519,p256}` form. Both are valid,
 and they are **distinct principals**: the storage layer (`canonical_trust_key`) keys them
 separately, so each spelling has its own grant bucket. Logging in under one spelling then the
-other returns a **different set of resources** — this is intended, not a bug. If a user reports
+other returns a **different set of resources**; this is intended, not a bug. If a user reports
 "my files disappeared" after switching login method, that is this behaviour (they authenticated
-as a different principal), not a regression — do **not** re-open #182.
+as a different principal), not a regression; do **not** re-open #182.
 
 ## Quick start
 
