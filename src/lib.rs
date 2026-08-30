@@ -34,7 +34,7 @@ pub use did::{
     pubkey_from_p256_did,
 };
 pub use did_method::{all_did_methods, find_did_method, DIDMethod};
-pub use key::{Ed25519Suite, KeyMethod, P256Suite};
+pub use key::{ed25519_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite};
 pub use peer::PeerMethod;
 pub use pkh::{Eip155Suite, PkhMethod};
 pub use principal::{authenticate, Principal};
