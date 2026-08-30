@@ -105,6 +105,65 @@ fn urlencoded(s: &str) -> String {
     s.replace(':', "%3A")
 }
 
+/// Require the challenge message to be bound to the endpoint the client dialed.
+///
+/// Extracts the `URI:` line from the CAIP-122 message and compares its origin
+/// (scheme, lowercased host, port with default-port normalization) against the
+/// origin of `base_url`. Paths, query strings and fragments are ignored on both
+/// sides: only the origin is load-bearing.
+///
+/// Fails closed. A missing `URI:` line, an empty value, a URI that does not
+/// parse, a URI with no host (e.g. `file:///x`), or an unparsable `base_url`
+/// all yield [`AuthClientError::UriOriginMismatch`] rather than a pass.
+///
+/// The free-form `domain` line (the first line of the message) is deliberately
+/// NOT enforced: deployed servers set it to a service label such as
+/// `aqua-node` rather than a hostname, so it carries no origin to compare.
+fn verify_uri_binding(message: &str, base_url: &str) -> Result<(), AuthClientError> {
+    let client_origin =
+        origin_of(base_url).unwrap_or_else(|| format!("<unparsable base_url: {base_url}>"));
+
+    let message_origin = match uri_line(message) {
+        None => "<message missing URI line>".to_string(),
+        Some(uri) => match origin_of(uri) {
+            Some(origin) => origin,
+            None => format!("<unparsable URI line: {uri}>"),
+        },
+    };
+
+    // Placeholders never parse as an origin, so any of the failure cases above
+    // lands here as a mismatch: the check fails closed by construction.
+    if message_origin == client_origin {
+        Ok(())
+    } else {
+        Err(AuthClientError::UriOriginMismatch {
+            message_origin,
+            client_origin,
+        })
+    }
+}
+
+/// Value of the `URI: ` line of a CAIP-122 message, if present and non-empty.
+fn uri_line(message: &str) -> Option<&str> {
+    message
+        .split('\n')
+        .find_map(|line| line.trim_end_matches('\r').trim().strip_prefix("URI:"))
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty())
+}
+
+/// Canonical `scheme://host[:port]` origin, with the scheme's default port made
+/// explicit so `https://x` and `https://x:443` compare equal.
+fn origin_of(raw: &str) -> Option<String> {
+    let url = url::Url::parse(raw).ok()?;
+    let scheme = url.scheme().to_ascii_lowercase();
+    let host = url.host_str()?.to_ascii_lowercase();
+    match url.port_or_known_default() {
+        Some(port) => Some(format!("{scheme}://{host}:{port}")),
+        None => Some(format!("{scheme}://{host}")),
+    }
+}
+
 /// Errors from the client authentication flow.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthClientError {
