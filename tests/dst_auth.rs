@@ -18,8 +18,12 @@
 //!   example's second half, a `hyper_util` connector so a hyper client can
 //!   dial the simulated network, is deliberately **not** copied: this suite
 //!   hand-rolls HTTP/1.1 instead, and reqwest is out of scope under
-//!   simulation.
-//! - **Seeds:** [`BASELINE_SEED`], [`PARTITION_SEED`].
+//!   simulation. Two cosmetic departures from the example: `accept` is written
+//!   with `async fn` rather than a hand-written `impl Future` (clippy's
+//!   `manual_async_fn`; the compiler still proves the future `Send` against
+//!   the trait's bound), and `local_addr` returns `std::io::Result` rather
+//!   than the `tokio::io::Result` re-export of the same type.
+//! - **Seeds:** [`BASELINE_SEED`], [`PARTITION_SEED`], [`DUPLICATE_SEED`].
 //!
 //! ## Determinism scope
 //!
@@ -89,6 +93,9 @@ const BASELINE_SEED: u64 = 0x5EED_0001;
 /// Seed for the partition-then-heal scenario.
 const PARTITION_SEED: u64 = 0x5EED_0002;
 
+/// Seed for the duplicate-delivery scenario.
+const DUPLICATE_SEED: u64 = 0x5EED_0003;
+
 /// Lower bound on per-message latency.
 const MIN_LATENCY: Duration = Duration::from_millis(50);
 
@@ -127,13 +134,11 @@ impl Listener for TurmoilListener {
     type Io = TcpStream;
     type Addr = SocketAddr;
 
-    fn accept(&mut self) -> impl std::future::Future<Output = (Self::Io, Self::Addr)> + Send {
-        async move {
-            self.0
-                .accept()
-                .await
-                .expect("the simulated listener stays bound for the life of the host")
-        }
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        self.0
+            .accept()
+            .await
+            .expect("the simulated listener stays bound for the life of the host")
     }
 
     fn local_addr(&self) -> std::io::Result<Self::Addr> {
@@ -313,13 +318,14 @@ async fn fetch_challenge(did: &str) -> IoResult<ChallengeEnvelope> {
 /// by [`MAX_ATTEMPTS`], so a network that never heals produces a named failure
 /// rather than a hang.
 async fn fetch_challenge_with_retries(did: &str) -> IoResult<(ChallengeEnvelope, usize)> {
-    let mut failed_attempts = 0;
-    for _ in 0..MAX_ATTEMPTS {
+    // The loop index is the number of attempts that already failed, so a
+    // success on the third pass reports two failures without a separate
+    // counter to keep honest.
+    for failed_attempts in 0..MAX_ATTEMPTS {
         if let Ok(Ok(envelope)) = tokio::time::timeout(ATTEMPT_TIMEOUT, fetch_challenge(did)).await
         {
             return Ok((envelope, failed_attempts));
         }
-        failed_attempts += 1;
         tokio::time::sleep(RETRY_BACKOFF).await;
     }
 
@@ -387,17 +393,29 @@ struct Recorded {
     failed_attempts: usize,
 }
 
+/// What the duplicate-delivery scenario proves, which is a different shape:
+/// two statuses for one nonce, and a token that still works afterwards.
+#[derive(Debug, Clone)]
+struct Duplicated {
+    /// Status of each session POST, in the order sent.
+    statuses: Vec<u16>,
+    /// The DID `/whoami` reported for whichever delivery minted the session.
+    whoami_did: String,
+}
+
 /// A slot the client writes its outcome into. Single-threaded under the sim,
 /// but a `Mutex` keeps the future `Send`-agnostic and the intent obvious.
-type Sink = Arc<Mutex<Option<Recorded>>>;
+/// Generic so each scenario records exactly what it proves, with no
+/// per-scenario fields left empty in the others.
+type Sink<T> = Arc<Mutex<Option<T>>>;
 
-fn sink() -> Sink {
+fn sink<T>() -> Sink<T> {
     Arc::new(Mutex::new(None))
 }
 
 /// Read back what the client recorded, failing the test with a useful message
 /// if it never got that far.
-fn recorded(sink: &Sink) -> Recorded {
+fn recorded<T: Clone>(sink: &Sink<T>) -> T {
     sink.lock()
         .expect("the sink mutex is never poisoned in a single-threaded sim")
         .clone()
@@ -564,5 +582,79 @@ fn login_survives_a_partition_that_heals() {
         outcome.whoami_did,
         signer.signer_did(),
         "the token minted after the heal must authenticate"
+    );
+}
+
+/// One challenge, one signature, two byte-identical session POSTs on two
+/// sequential connections: what a network that duplicates a request, or a
+/// client that retries one whose response it never saw, looks like from the
+/// server's side.
+///
+/// The second delivery is refused with **404, not 401**, and that is the
+/// correct answer rather than a sloppy one. `ChallengeStore::validate` removes
+/// the nonce as it validates it, so by the time the duplicate arrives the
+/// nonce is gone from the store and is genuinely indistinguishable from one
+/// this server never issued. Answering 401 would leak the difference between
+/// "spent" and "never existed", which is exactly the oracle a nonce-grinding
+/// attacker wants.
+#[test]
+fn a_duplicated_session_post_mints_exactly_one_session() {
+    let signer = signers::ed25519_did_key();
+    let peer = simulated_peer(signer.clone());
+    let mut sim = simulation(DUPLICATE_SEED);
+    host_peer(&mut sim, &peer);
+
+    let sink = sink();
+    let client_sink = sink.clone();
+    let client_signer = signer.clone();
+    sim.client(CLIENT_HOST, async move {
+        let signer = client_signer.as_ref();
+        let envelope = fetch_challenge(signer.signer_did()).await?;
+        let session_request = sign_challenge(signer, envelope).await?;
+
+        let first = post_session(&session_request).await?;
+        let second = post_session(&session_request).await?;
+        let statuses = vec![first.status, second.status];
+
+        let minted = [first, second]
+            .into_iter()
+            .find(|reply| reply.status == 200)
+            .ok_or_else(|| Error::other("neither delivery minted a session"))?;
+        let session: SessionResponse = serde_json::from_slice(&minted.body)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        let whoami_did = whoami(&session.token).await?;
+
+        *client_sink.lock().unwrap() = Some(Duplicated {
+            statuses,
+            whoami_did,
+        });
+        Ok(())
+    });
+
+    sim.run().expect("the simulation must not fault");
+
+    let outcome = recorded(&sink);
+    assert_eq!(
+        outcome.statuses.iter().filter(|status| **status == 200).count(),
+        1,
+        "exactly one delivery may mint a session, got {:?}",
+        outcome.statuses
+    );
+    assert_eq!(
+        outcome.statuses.iter().filter(|status| **status == 404).count(),
+        1,
+        "exactly one delivery must find the nonce already gone, got {:?}",
+        outcome.statuses
+    );
+    // The deliveries are sequential, so which one wins is not a race.
+    assert_eq!(
+        outcome.statuses,
+        vec![200, 404],
+        "the first delivery wins and the second finds nothing"
+    );
+    assert_eq!(
+        outcome.whoami_did,
+        signer.signer_did(),
+        "the single minted token must still authenticate"
     );
 }
