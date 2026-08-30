@@ -65,11 +65,13 @@
 //! already seen, it never issues them.
 
 mod base;
+mod replay;
 mod sign;
 #[cfg(test)]
 mod test_signers;
 mod verify;
 
+pub use replay::{NonceReplayGuard, MAX_SEEN_NONCES};
 pub use sign::sign_request;
 pub use verify::{verify_request, VerifyOptions};
 

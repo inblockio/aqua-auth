@@ -17,10 +17,11 @@ use super::base::{
     SignatureParams, ALLOWED_COMPONENTS, COMPONENT_AUTHORITY, PARAM_ORDER,
 };
 use super::{
-    alg_for_did, unix_now, HttpSigError, RequestParts, DEFAULT_CLOCK_SKEW, MAX_VALIDITY,
-    TAG_AQUA_INTERNAL, TAG_WEB_BOT_AUTH,
+    alg_for_did, unix_now, HttpSigError, NonceReplayGuard, RequestParts, DEFAULT_CLOCK_SKEW,
+    MAX_VALIDITY, TAG_AQUA_INTERNAL, TAG_WEB_BOT_AUTH,
 };
 use crate::Principal;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Verification policy.
@@ -33,15 +34,26 @@ pub struct VerifyOptions {
     pub expected_tag: String,
     /// How far ahead of this verifier's clock a signer's `created` may be.
     pub clock_skew: Duration,
+    /// Optional single-use enforcement. Without it, a captured request can be
+    /// replayed until it expires.
+    pub replay_guard: Option<Arc<NonceReplayGuard>>,
 }
 
 impl VerifyOptions {
-    /// Options requiring the given `tag`, with [`DEFAULT_CLOCK_SKEW`].
+    /// Options requiring the given `tag`, with [`DEFAULT_CLOCK_SKEW`] and no
+    /// replay guard.
     pub fn new(expected_tag: impl Into<String>) -> Self {
         Self {
             expected_tag: expected_tag.into(),
             clock_skew: DEFAULT_CLOCK_SKEW,
+            replay_guard: None,
         }
+    }
+
+    /// Enforce single use of each nonce via the given guard.
+    pub fn with_replay_guard(mut self, guard: Arc<NonceReplayGuard>) -> Self {
+        self.replay_guard = Some(guard);
+        self
     }
 
     /// Options for the Aqua-internal profile ([`TAG_AQUA_INTERNAL`]).
@@ -124,7 +136,17 @@ pub(crate) fn verify_request_at(
     }
 
     let base = build_signature_base(parts, &params)?;
-    Ok(crate::authenticate(&params.keyid, &base, &signature_bytes)?)
+    let principal = crate::authenticate(&params.keyid, &base, &signature_bytes)?;
+
+    // Record the nonce only once the signature has verified. Recording earlier
+    // would let anyone burn a nonce by presenting a corrupted copy of a
+    // request before the genuine one arrives, and would let unsigned traffic
+    // fill a bounded guard.
+    if let Some(guard) = &opts.replay_guard {
+        guard.check_and_record_at(&params.nonce, params.expires, now)?;
+    }
+
+    Ok(principal)
 }
 
 /// Parse `Signature-Input` into the one label and parameter set this profile
@@ -1041,6 +1063,172 @@ mod tests {
         let opts = VerifyOptions::default();
         assert_eq!(opts.expected_tag, TAG_AQUA_INTERNAL);
         assert_eq!(opts.clock_skew, DEFAULT_CLOCK_SKEW);
+    }
+
+    // ── replay ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn the_same_request_cannot_be_verified_twice_with_a_guard() {
+        let signer = Ed25519TestSigner::generate();
+        let headers = sign_request_at(
+            &signer,
+            &parts(),
+            &Profile::AquaInternal,
+            Duration::from_secs(300),
+            NOW,
+        )
+        .await
+        .unwrap();
+
+        let guard = std::sync::Arc::new(NonceReplayGuard::new());
+        let opts = VerifyOptions::aqua_internal().with_replay_guard(guard.clone());
+
+        assert!(verify_request_at(
+            &parts(),
+            &headers.signature_input,
+            &headers.signature,
+            &opts,
+            NOW + 1
+        )
+        .is_ok());
+
+        let err = verify_request_at(
+            &parts(),
+            &headers.signature_input,
+            &headers.signature,
+            &opts,
+            NOW + 2,
+        )
+        .unwrap_err();
+        assert!(matches!(err, HttpSigError::NonceReplayed));
+    }
+
+    #[tokio::test]
+    async fn without_a_guard_a_replay_still_verifies() {
+        let signer = Ed25519TestSigner::generate();
+        let headers = sign_request_at(
+            &signer,
+            &parts(),
+            &Profile::AquaInternal,
+            Duration::from_secs(300),
+            NOW,
+        )
+        .await
+        .unwrap();
+
+        let opts = VerifyOptions::aqua_internal();
+        assert!(verify_request_at(
+            &parts(),
+            &headers.signature_input,
+            &headers.signature,
+            &opts,
+            NOW + 1
+        )
+        .is_ok());
+        assert!(verify_request_at(
+            &parts(),
+            &headers.signature_input,
+            &headers.signature,
+            &opts,
+            NOW + 2
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn two_distinct_requests_both_verify_under_one_guard() {
+        let signer = Ed25519TestSigner::generate();
+        let guard = std::sync::Arc::new(NonceReplayGuard::new());
+        let opts = VerifyOptions::aqua_internal().with_replay_guard(guard.clone());
+
+        for _ in 0..2 {
+            let headers = sign_request_at(
+                &signer,
+                &parts(),
+                &Profile::AquaInternal,
+                Duration::from_secs(300),
+                NOW,
+            )
+            .await
+            .unwrap();
+            assert!(verify_request_at(
+                &parts(),
+                &headers.signature_input,
+                &headers.signature,
+                &opts,
+                NOW + 1
+            )
+            .is_ok());
+        }
+        assert_eq!(guard.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_failed_signature_does_not_consume_the_nonce() {
+        // Otherwise anyone could burn a nonce by replaying a corrupted copy of
+        // a request before the genuine one arrives.
+        let signer = Ed25519TestSigner::generate();
+        let headers = sign_request_at(
+            &signer,
+            &parts(),
+            &Profile::AquaInternal,
+            Duration::from_secs(300),
+            NOW,
+        )
+        .await
+        .unwrap();
+
+        let guard = std::sync::Arc::new(NonceReplayGuard::new());
+        let opts = VerifyOptions::aqua_internal().with_replay_guard(guard.clone());
+
+        let corrupted = signature_header(SIGNATURE_LABEL, &[7u8; 64]).unwrap();
+        assert!(verify_request_at(
+            &parts(),
+            &headers.signature_input,
+            &corrupted,
+            &opts,
+            NOW + 1
+        )
+        .is_err());
+        assert_eq!(guard.len(), 0, "a rejected signature must not record a nonce");
+
+        // The genuine request still goes through.
+        assert!(verify_request_at(
+            &parts(),
+            &headers.signature_input,
+            &headers.signature,
+            &opts,
+            NOW + 1
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_recorded_nonce_expires_with_the_signature() {
+        let signer = Ed25519TestSigner::generate();
+        let headers = sign_request_at(
+            &signer,
+            &parts(),
+            &Profile::AquaInternal,
+            Duration::from_secs(300),
+            NOW,
+        )
+        .await
+        .unwrap();
+
+        let guard = std::sync::Arc::new(NonceReplayGuard::new());
+        let opts = VerifyOptions::aqua_internal().with_replay_guard(guard.clone());
+        verify_request_at(
+            &parts(),
+            &headers.signature_input,
+            &headers.signature,
+            &opts,
+            NOW + 1,
+        )
+        .unwrap();
+
+        guard.cleanup_expired_at(NOW + 300);
+        assert_eq!(guard.len(), 0);
     }
 
     #[tokio::test]
