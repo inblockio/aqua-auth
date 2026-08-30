@@ -72,6 +72,10 @@ pub use wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 #[cfg(feature = "client")]
 pub mod client;
 
+// --- Behind `http-sig` feature (RFC 9421 per-request signatures) ---
+#[cfg(feature = "http-sig")]
+pub mod http_sig;
+
 // --- Behind `webauthn` feature ---
 #[cfg(feature = "webauthn")]
 pub mod webauthn;
