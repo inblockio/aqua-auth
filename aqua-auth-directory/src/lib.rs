@@ -26,8 +26,13 @@
 //! `did:pkh:ed25519` spelling is a distinct principal (see the two-principal
 //! ruling in the project CLAUDE.md) and is not accepted here.
 
+pub mod render;
 pub mod thumbprint;
 
+pub use render::{
+    render_aqua_identity, render_jwks, DirectoryDocument, WELL_KNOWN_AQUA_IDENTITY,
+    WELL_KNOWN_HTTP_MESSAGE_SIGNATURES,
+};
 pub use thumbprint::okp_thumbprint;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
