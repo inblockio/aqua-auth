@@ -458,3 +458,64 @@ A cross-language test vector file (planned, not yet shipped) will provide
 concrete inputs (DID, message, signature bytes) and expected verification
 outcomes, enabling compatible implementations in other languages to validate
 against this spec.
+
+---
+
+## 11. Three Proof Surfaces (Content, Connection, Request)
+
+This spec so far defines the *connection* surface. Since 0.5.0 the crate
+family spans three distinct proof surfaces. Each answers a different question,
+and none subsumes the others:
+
+| Surface | Mechanism | Question answered | Lifetime |
+|---|---|---|---|
+| Content | Aqua-tree Signature revisions (Aqua SDK; fork branches, SHA3-256 chain, `signer_did`) | Who **authored** this data? | Durable: travels with the data, verifiable offline, by anyone |
+| Connection | CAIP-122 challenge-response (this spec, sections 2 to 10), then a bearer session token | Who is on this **connection**? | Ephemeral session |
+| Request | RFC 9421 HTTP Message Signatures (`http-sig` feature, experimental) | Who sent this specific **HTTP request**? | Single request, stateless verification |
+
+**Author is not courier.** The entity delivering an aqua-tree need not be any
+of its signers; a signed tree is durable and can be re-delivered by anyone who
+holds it. Tree signatures prove authorship; the connection or request surface
+proves who is delivering *now*; authorization policy decides what that
+delivery may effect. Conflating these surfaces is how credential-relay bugs
+happen.
+
+All three surfaces converge on the same identity types: verification of a
+login (section 7) or of a request signature yields the same `Principal`, and
+the same async `Signer` produces tree, login, and request signatures from one
+key custody point.
+
+### 11.1 The `http-sig` request profile (experimental)
+
+Status: tracks `draft-meunier-web-bot-auth-architecture-05` and is exempt from
+this crate's semver stability promise until the IETF `webbotauth` working
+group adopts a document. Wire details live in the `http_sig` module rustdoc;
+normative summary:
+
+- Covered components: `"@authority"` always; `"signature-agent"` when the
+  header is present (coverage must match presence in both directions).
+- Signature parameters, fixed order: `created`, `expires`, `keyid`, `alg`,
+  `nonce`, `tag`.
+- **Aqua-internal profile:** `keyid` is the signer's DID, `tag` is
+  `aqua-auth`, `alg` is implied by the DID method. Verification rebuilds the
+  signature base and dispatches through the same registries as section 7,
+  returning a `Principal`. No key directory is needed: Aqua DIDs are
+  self-certifying.
+- **Interop profile:** `tag` is `web-bot-auth`, Ed25519 only, `keyid` is an
+  RFC 7638 JWK thumbprint resolved via a key directory (below). Used when an
+  Aqua agent must be verifiable by third-party infrastructure (Cloudflare,
+  Akamai, AWS WAF class verifiers).
+- Replay policy: `created`/`expires` window (24h cap), clock-skew tolerance,
+  and optional single-use nonces via a bounded replay guard; a nonce is
+  recorded only after the signature verifies.
+
+### 11.2 Key advertisement (`aqua-auth-directory`)
+
+The workspace crate `aqua-auth-directory` renders public-key advertisement
+documents for services: the JWKS directory per
+`draft-meunier-webbotauth-httpsig-directory-00` at
+`/.well-known/http-message-signatures-directory`, and an Aqua-native identity
+document at `/.well-known/aqua-identity`. Boundary: public keys only, with
+validity windows and rotation overlap; private key custody stays with each
+service's `Signer`. The crate is versioned independently (0.x) so IETF draft
+churn never forces a version bump on `aqua-auth` itself.

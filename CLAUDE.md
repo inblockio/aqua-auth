@@ -47,6 +47,8 @@ Standalone P-256 WebAuthn assertion verifier for login flows. Validates rpIdHash
 ```
 src/
   lib.rs              # Public API, verify_caip122 dispatcher
+  signer.rs           # async Signer trait + SignError (SDK-shape, raw sig bytes)
+  principal.rs        # Principal type + authenticate() (scoped-self identity)
   cipher_suite.rs     # CipherSuite trait, registry
   crypto_error.rs     # CryptoError enum
   did.rs              # DID parsing, EIP-55, identifier extraction
@@ -69,10 +71,32 @@ src/
   types.rs            # Challenge, Session, SessionInfo, AuthenticatedDid
   wire.rs             # ChallengeEnvelope, SessionRequest, SessionResponse
   --- behind feature "client" ---
-  client.rs           # authenticate() async helper
+  client.rs           # authenticate(&dyn Signer) async client, URI-binding check
   --- behind feature "webauthn" ---
   webauthn.rs         # verify_webauthn_assertion(), WebAuthnAssertionParams
+  --- behind feature "http-sig" (EXPERIMENTAL, tracks IETF draft) ---
+  http_sig/
+    mod.rs            # RequestParts, Profile, SignedHeaders, HttpSigError
+    base.rs           # RFC 9421 s2.5 signature base construction
+    sign.rs           # sign_request() over the Signer trait
+    verify.rs         # verify_request() -> Principal, VerifyOptions
+    replay.rs         # bounded NonceReplayGuard
+aqua-auth-directory/  # workspace member 0.x: public-key advertisement
+  src/lib.rs          # KeyRegistry, AdvertisedKey (public keys ONLY, no custody)
+  src/thumbprint.rs   # RFC 7638 JWK thumbprints (SHA-256 here is correct)
+  src/render.rs       # JWKS + aqua-identity .well-known renderers
 ```
+
+### Three Proof Surfaces (ruling, 2026-08-30)
+
+Content is signed by aqua-trees (SDK), the connection by CAIP-122 sessions
+(this crate), and individual requests by RFC 9421 (`http-sig` feature). Author
+is not courier: tree signatures prove authorship, transport auth proves who
+delivers now. All verification paths return the same `Principal`; one async
+`Signer` drives all three surfaces. `http-sig` and `aqua-auth-directory` track
+IETF drafts (web-bot-auth) and are exempt from the semver promise until the
+IETF `webbotauth` WG adopts documents. Full rationale: SPEC.md section 11 and
+`docs/superpowers/plans/2026-08-30-webbotauth-maturation.md`.
 
 ### Store Backend
 
@@ -107,14 +131,15 @@ Since this crate is headed for crates.io, the public API is subject to semver. B
 ### Build & Test
 
 ```bash
-cargo build                      # Build with default features (crypto/DID only)
-cargo build --features http      # Build with session/auth layer
-cargo build --features client    # Build with HTTP client (implies http)
-cargo build --features webauthn  # Build with WebAuthn assertion verifier
-cargo test                       # Run all 76 default tests
-cargo test --features webauthn   # Run all 83 tests (includes WebAuthn)
-cargo test --all-features        # Run everything
-cargo doc --open                 # Generate and view docs
+cargo build                       # Default features (crypto/DID + Signer trait)
+cargo build --features http       # Session/auth layer
+cargo build --features client     # HTTP client (implies http)
+cargo build --features webauthn   # WebAuthn assertion verifier
+cargo build --features http-sig   # RFC 9421 request signatures (experimental)
+cargo test                        # Default-feature tests
+cargo test --all-features         # Everything (approx. 247 lib + integration)
+cargo test -p aqua-auth-directory # The directory workspace member
+cargo doc --open                  # Generate and view docs
 ```
 
 ### Testing Requirements
@@ -139,9 +164,12 @@ Challenge and session stores must test: creation, validation, TTL expiration, an
 
 ## Roadmap
 
-- [ ] Pluggable store trait with Redis as default backend
+- [ ] Pluggable store trait with Redis backend, scoped to human web sessions
+      (per-request `http-sig` removes SessionStore from pure S2S paths)
+- [ ] Accept-Signature server-issued nonces and RFC 9421 signed responses
+      (mutual node-to-node auth); deferred, see SPEC.md section 11
 - [ ] CI/CD pipeline (GitHub Actions)
-- [ ] crates.io publication prep (README, license file, metadata)
+- [ ] crates.io publication prep (workspace: aqua-auth + aqua-auth-directory)
 
 <!-- gitnexus:start -->
 # GitNexus: Code Intelligence
