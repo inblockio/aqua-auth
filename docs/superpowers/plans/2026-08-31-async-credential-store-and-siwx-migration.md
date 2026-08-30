@@ -67,13 +67,32 @@ default.**
 - Do **not** add an account-linking API to `aqua-auth`.
 - Do **not** move, port, or reshape `LinkEntry`, `LinkChallengeState`,
   `link_start`, or `link_finish`.
-- Do **not** migrate the `webauthn:link/*` Redis namespace. It stays where it
-  is, owned and read by siwx-oidc.
-- Your obligation is only that account linking **still works unchanged** after
-  the credential migration. Prove it with a test, do not refactor it.
+- Do **not** migrate or write the `webauthn:link/*` Redis namespace. It stays
+  where it is, owned and written by siwx-oidc.
+- Your obligation is that account linking **still works unchanged** after the
+  credential migration. Prove it with a test, do not refactor it.
 
 `aqua-auth` owns credential storage. siwx-oidc owns the relationship between a
 credential and a primary DID. That line does not move in this work.
+
+### Out of scope for OWNERSHIP is not out of scope for CORRECTNESS
+
+The migration **must read** `webauthn:link/*`. It must not own, write, or
+reshape it. Reading is not owning.
+
+This matters because the link table is **not an adjacent feature, it is part of
+the credential read path**. `verify_credential`
+(`~/siwx-oidc/src/webauthn.rs:298-311`) resolves the authenticated identity as:
+
+```rust
+let did = match redis.get_raw(&format!("{}/{}", LINK_PREFIX, cred_id_b64)).await? {
+    Some(link_json) => link_entry.primary_did,   // a link OVERRIDES the derived DID
+    None            => passkey_did,              // otherwise, derived from the Passkey
+};
+```
+
+A migration that ignores the link table writes the **wrong identity** for every
+linked credential, and does so silently. See the corrected Phase 3 mapping.
 
 ---
 
@@ -142,10 +161,10 @@ Write a migration that copies siwx-oidc's credentials into aqua-auth's layout.
 |---|---|---|
 | `credential_id` | the key `webauthn:credential/{b64}` | decode the key itself |
 | `public_key` | the value, raw `Passkey` JSON | copy **verbatim**; aqua-auth stores it opaquely and never parses it |
-| `did` | derived from the `Passkey` | `p256_compressed_from_passkey` then `did_key_from_p256_compressed`. siwx-oidc computes the identical value today; assert they agree on every row |
-| `sign_count` | absent upstream | `0`. This is the safe default: the next assertion's counter exceeds it and tracking resumes. It can under-detect a clone once; it cannot lock anyone out |
+| `did` | **`webauthn:link/{b64}` if present, else derived** | If a `LinkEntry` exists, use its `primary_did`. Only otherwise use `p256_compressed_from_passkey` then `did_key_from_p256_compressed`. This must reproduce `verify_credential`'s resolution exactly. Getting this wrong silently records the wrong principal for every linked credential |
+| `sign_count` | **`cred.counter` inside the `Passkey` JSON** | **Not absent.** siwx-oidc tracks the counter *inside the blob* and rewrites it on every authentication (`~/siwx-oidc/src/webauthn.rs:316-332`), whereas aqua-auth keeps a sidecar field and never rewrites the blob. Extract `passkey_json["cred"]["counter"]`. Defaulting to `0` would silently reset clone detection for every migrated credential |
 | `transports` | absent | empty |
-| `label` | absent | `None`. Do **not** read `LinkEntry.label`; linking is out of scope |
+| `label` | `LinkEntry.label` when linked | `None` otherwise. This is a **read** of the link table, which is permitted; writing it is not |
 | `created_at` | absent | migration timestamp |
 
 **Non-negotiable safety properties:**
@@ -162,9 +181,26 @@ Write a migration that copies siwx-oidc's credentials into aqua-auth's layout.
   undecodable credential must not strand the rest.
 
 **Gate 3.** Prove it against a disposable Redis instance seeded with fixture
-credentials in siwx-oidc's layout: dry-run reports correct counts, a real run
-produces correct `StoredCredential` rows, a second run changes nothing, and the
-original keys are byte-identical afterwards.
+credentials in siwx-oidc's layout, **including at least one linked credential
+and one with a non-zero sign counter**: dry-run reports correct counts, a real
+run produces correct `StoredCredential` rows, a second run changes nothing, and
+the original keys are byte-identical afterwards.
+
+**Equivalence assertion (the load-bearing one).** For every migrated row, the
+`did` written into `StoredCredential` must equal the DID that
+`verify_credential` would resolve for that same credential. Assert this
+directly, comparing against the link-aware resolution, not against
+`did_from_passkey`. Comparing the migration to the derived DID alone passes
+trivially while being wrong for exactly the linked rows this gate exists to
+catch.
+
+**Consistency requirement to record, not to solve here.** After migration the
+link table remains authoritative in siwx-oidc, while `StoredCredential.did`
+holds a snapshot of its effect. A later link or unlink therefore makes the two
+disagree. Either siwx-oidc keeps resolving through its own link table (simplest,
+and the default while dual-write is on), or link/unlink must write through to
+the credential store. Do **not** design the write-through here; state the
+requirement in the report and leave it to the owner.
 
 ### Phase 4: siwx-oidc adoption, on a branch
 
