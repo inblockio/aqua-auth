@@ -61,10 +61,11 @@ is genuinely deployed.
 
 ### aquafier-rs
 
-Named `aqua_auth::RedisWebauthnStore` behind `#[cfg(all(feature = "webauthn",
-feature = "redis"))]` while declaring only `http`, `webauthn`, `ceremony`. It
-compiled solely because Cargo unions features across the graph and aqua-node
-declares `redis`. That is an undeclared dependency on a sibling repo's feature
+`crates/aquafier-auth/src/webauthn.rs` names `aqua_auth::RedisWebauthnStore`
+**unconditionally**, with no cfg gate, while the workspace declared only
+`http`, `webauthn`, `ceremony`. It compiled solely because Cargo unions
+features across the graph and aqua-node, whose crates are path dependencies of
+this workspace, declares `redis`. That is an undeclared dependency on a sibling repo's feature
 choice: the day aqua-node drops `redis`, aquafier-rs stops compiling for
 reasons nothing in aquafier-rs explains. `redis` is now declared explicitly.
 
