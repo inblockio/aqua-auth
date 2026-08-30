@@ -20,6 +20,7 @@ mod harness;
 use aqua_auth::http_sig::{sign_request, Profile, RequestParts, SignedHeaders};
 use aqua_auth::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 use aqua_auth::Signer;
+use aqua_auth_directory::{WELL_KNOWN_AQUA_IDENTITY, WELL_KNOWN_HTTP_MESSAGE_SIGNATURES};
 use axum::body::Body;
 use axum::http::{header, Request, Response, StatusCode};
 use harness::{signers, AquaPeer};
@@ -467,4 +468,100 @@ async fn an_unsigned_request_to_the_signed_endpoint_is_refused() {
 
     let response = send(&peer, get(SIG_TARGET).body(Body::empty()).unwrap()).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ── the two .well-known directory documents ─────────────────────────────
+//
+// A peer advertises its own key when that key is an Ed25519 did:key, the only
+// form the directory crate accepts in v0.1. The routes are mounted regardless,
+// and a peer with nothing to advertise renders an empty key list rather than an
+// error, so the endpoint behaves uniformly for clients either way.
+
+fn content_type(response: &Response<Body>) -> &str {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .expect("a directory response must declare its media type")
+        .to_str()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_jwks_directory_is_served_with_the_drafts_media_type_and_kid() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let response = send(
+        &peer,
+        get(WELL_KNOWN_HTTP_MESSAGE_SIGNATURES)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        content_type(&response),
+        "application/http-message-signatures-directory+json"
+    );
+    let body: serde_json::Value = body_json(response).await;
+
+    let advertised = peer.registry.keys().first().expect("peer advertises itself");
+    assert_eq!(advertised.did, signer.signer_did());
+    assert_eq!(body["keys"][0]["kid"], advertised.thumbprint().unwrap());
+    assert_eq!(body["keys"][0]["kty"], "OKP");
+    assert_eq!(body["keys"][0]["crv"], "Ed25519");
+}
+
+#[tokio::test]
+async fn the_aqua_identity_document_names_the_peers_did() {
+    let signer = signers::ed25519_did_key();
+    let peer = peer(signer.clone());
+
+    let response = send(
+        &peer,
+        get(WELL_KNOWN_AQUA_IDENTITY).body(Body::empty()).unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(content_type(&response), "application/json");
+    let body: serde_json::Value = body_json(response).await;
+
+    let advertised = peer.registry.keys().first().expect("peer advertises itself");
+    assert_eq!(body["version"], 1);
+    assert_eq!(body["dids"][0], signer.signer_did());
+    assert_eq!(
+        body["keys"][0]["thumbprint"],
+        advertised.thumbprint().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn a_peer_with_no_advertisable_key_still_serves_both_documents() {
+    // eip155 has no did:key form, so the registry stays empty by design.
+    let peer = peer(signers::eip155());
+    assert!(peer.registry.is_empty());
+
+    let jwks: serde_json::Value = body_json(
+        send(
+            &peer,
+            get(WELL_KNOWN_HTTP_MESSAGE_SIGNATURES)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(jwks["keys"].as_array().unwrap().len(), 0);
+
+    let identity: serde_json::Value = body_json(
+        send(
+            &peer,
+            get(WELL_KNOWN_AQUA_IDENTITY).body(Body::empty()).unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(identity["dids"].as_array().unwrap().len(), 0);
 }
