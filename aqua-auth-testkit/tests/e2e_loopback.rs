@@ -18,14 +18,12 @@
 //!   count of zero is the difference between "the login failed" and "the key
 //!   was never used", and only the second is a defence.
 //!
-//! ## Feature gate
+//! ## No feature gate
 //!
-//! The harness needs `http` (stores, wire types) and `http-sig`
-//! (`verify_request` behind `/sig/whoami`); this suite additionally needs
-//! `client` (reqwest and `AuthClientError`). `client` implies `http` in
-//! `Cargo.toml`, and `http-sig` implies neither, so naming `client` and
-//! `http-sig` is exactly sufficient. Run with `cargo test --all-features` or
-//! `cargo test --features client,http-sig`.
+//! The lib dependency names `http` and `http-sig`; this crate's
+//! dev-dependencies add aqua-auth's `client` feature (reqwest and
+//! `AuthClientError`), so this suite always compiles and always runs. Run
+//! with `cargo test -p aqua-auth-testkit --test e2e_loopback`.
 //!
 //! ## No sleeps
 //!
@@ -34,9 +32,7 @@
 //! kernel is queueing connections by the time a test has an address to dial.
 //! Every port is ephemeral (`:0`), so suites can run concurrently.
 
-#![cfg(all(feature = "client", feature = "http-sig"))]
-
-mod harness;
+use aqua_auth_testkit as harness;
 
 use aqua_auth::client::{authenticate, AuthClientError};
 use aqua_auth::wire::ChallengeEnvelope;

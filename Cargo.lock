@@ -15,9 +15,7 @@ dependencies = [
 name = "aqua-auth"
 version = "0.5.0"
 dependencies = [
- "aqua-auth-directory",
  "async-trait",
- "axum",
  "base64 0.21.7",
  "bs58",
  "chrono",
@@ -35,9 +33,7 @@ dependencies = [
  "sha3",
  "thiserror",
  "tokio",
- "tower",
  "tracing",
- "turmoil",
  "url",
 ]
 
@@ -51,6 +47,30 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "aqua-auth-testkit"
+version = "0.1.0"
+dependencies = [
+ "aqua-auth",
+ "aqua-auth-directory",
+ "async-trait",
+ "axum",
+ "bs58",
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "k256",
+ "p256",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha3",
+ "tokio",
+ "tower",
+ "turmoil",
 ]
 
 [[package]]

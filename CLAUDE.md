@@ -139,10 +139,12 @@ cargo build --features http-sig   # RFC 9421 request signatures (experimental)
 cargo test                        # Default-feature tests
 cargo test --all-features         # Everything (approx. 247 lib + integration)
 cargo test -p aqua-auth-directory # The directory workspace member
-# E2E suites (gated on features, all run under --all-features):
-cargo test --all-features --test e2e_inmemory  # in-process harness matrix
-cargo test --all-features --test e2e_loopback  # real reqwest client over sockets
-cargo test --all-features --test dst_auth      # turmoil DST, fixed seeds
+# E2E suites live in the testkit member (publish = false); no feature flags
+# needed, the testkit pins the features its suites require:
+cargo test -p aqua-auth-testkit                       # all three e2e suites
+cargo test -p aqua-auth-testkit --test e2e_inmemory   # in-process harness matrix
+cargo test -p aqua-auth-testkit --test e2e_loopback   # real reqwest client over sockets
+cargo test -p aqua-auth-testkit --test dst_auth       # turmoil DST, fixed seeds
 cargo doc --open                  # Generate and view docs
 ```
 

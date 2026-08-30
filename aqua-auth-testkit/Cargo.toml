@@ -1,0 +1,43 @@
+[package]
+name = "aqua-auth-testkit"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "E2E test harness for aqua-auth: AquaPeer, test signers, and the e2e suites. Internal testkit, never published."
+# Internal testkit by ruling (2026-08-30): consumers reach it by path or git,
+# and its API carries no stability promise.
+publish = false
+
+[dependencies]
+# The library under test. The harness lib needs `http` (stores, wire types)
+# and `http-sig` (verify_request); the `client` feature is added only by the
+# dev-dependencies below, so downstream consumers of the testkit do not pull
+# reqwest unless they ask for it.
+aqua-auth = { path = "..", features = ["http", "http-sig"] }
+aqua-auth-directory = { path = "../aqua-auth-directory" }
+async-trait = "0.1"
+axum = "0.8"
+# The test signers generate real keys and build the DID spellings themselves,
+# so the crypto crates are direct dependencies here, pinned to the same
+# versions aqua-auth uses.
+bs58 = "0.5"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"
+k256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.8"
+sha3 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "net", "time", "macros"] }
+
+[dev-dependencies]
+# The e2e suites live here so aqua-auth's own feature-lane matrix stays
+# untouched: this crate always has the features its tests need, so no suite
+# can silently compile to zero tests under the wrong flags again.
+aqua-auth = { path = "..", features = ["client"] }
+chrono = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tower = { version = "0.5", features = ["util"] }
+turmoil = "0.7"
+tokio = { version = "1", features = ["full"] }

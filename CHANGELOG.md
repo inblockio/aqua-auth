@@ -4,6 +4,17 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 semver, staying below 1.0 while the crate is in active development.
 
+## [Unreleased]
+
+### Changed
+
+- The e2e harness (`AquaPeer`, test signers) and the three e2e suites moved
+  from `tests/` into a new `aqua-auth-testkit` workspace member
+  (`publish = false`), so other repos can reuse the harness by path or git
+  dependency instead of copying it. No change to the published `aqua-auth`
+  crate: its dependency surface, features, and test lanes are identical; the
+  suites now run via `cargo test -p aqua-auth-testkit`.
+
 ## [0.5.0] - 2026-08-30
 
 Service-to-service maturation release: per-request signatures, async signing,

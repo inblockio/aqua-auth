@@ -209,7 +209,7 @@ Session tokens are opaque bearers: anyone holding one can use it until expiry or
 
 - The CAIP-122 wire contract ([`SPEC.md`](SPEC.md) sections 2 to 10) is stable.
 - `http-sig` and `aqua-auth-directory` track IETF drafts from the [`webbotauth`](https://datatracker.ietf.org/wg/webbotauth/about/) working group (no adopted documents yet) and are **explicitly experimental**: exempt from the semver stability promise until the WG adopts documents. Pinned draft revisions are recorded in the module docs.
-- End-to-end coverage lives in three suites over one `tests/harness/` peer: `e2e_inmemory` (in-process tower calls, five-spelling login matrix + adversarial set), `e2e_loopback` (the real `reqwest` client over ephemeral sockets, including the relay defense), and `dst_auth` (turmoil deterministic network simulation: latency, partition-then-heal, duplicate delivery, fixed seeds). All are dev-dependency-only and run under `cargo test --all-features`.
+- End-to-end coverage lives in the `aqua-auth-testkit` workspace member (`publish = false`): one `AquaPeer` harness plus three suites, `e2e_inmemory` (in-process tower calls, five-spelling login matrix + adversarial set), `e2e_loopback` (the real `reqwest` client over ephemeral sockets, including the relay defense), and `dst_auth` (turmoil deterministic network simulation: latency, partition-then-heal, duplicate delivery, fixed seeds). Run with `cargo test -p aqua-auth-testkit`; other repos reuse the harness by path or git dependency.
 - Versions stay below 1.0 deliberately while the crate family is in active development; minor bumps may break. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Related projects

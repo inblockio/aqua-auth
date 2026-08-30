@@ -1,10 +1,10 @@
 //! `AquaPeer`: one Aqua service definition, mountable three ways.
 //!
 //! A peer is an identity (its own [`Signer`]) plus the real server-side state
-//! this crate ships (a [`ChallengeStore`], a [`SessionStore`], a
+//! aqua-auth ships (a [`ChallengeStore`], a [`SessionStore`], a
 //! [`NonceReplayGuard`], a [`KeyRegistry`]) plus an axum [`Router`] of thin
 //! handlers over the real crate APIs. Nothing here reimplements verification;
-//! the handlers do exactly what the README's server quick start does.
+//! the handlers do exactly what the aqua-auth README's server quick start does.
 //!
 //! The same `router()` serves every mode:
 //!
@@ -15,18 +15,12 @@
 //! - **simulated**: the same `Router` mounted as a host under a deterministic
 //!   network simulator
 //!
-//! Subdirectories of `tests/` are not compiled as their own test crates, so
-//! this module is shared by `mod harness;` in each suite file. Each suite
-//! therefore gets its own copy, and each suite uses a different subset of it,
-//! which is why the whole module allows dead code.
-//!
-//! ## Feature gate
-//!
-//! The harness needs `http` (stores, wire types) and `http-sig`
-//! (`verify_request`). `http-sig` does **not** imply `http` in `Cargo.toml`,
-//! so every suite that includes this module must name both.
-
-#![allow(dead_code)]
+//! This crate is the promoted form of aqua-auth's former `tests/harness/`
+//! module (promotion trigger: a second repo needed `AquaPeer`). It is
+//! `publish = false` by ruling: consumers reach it by path or git, and its
+//! API carries no stability promise. The e2e suites live in this crate's
+//! `tests/` so they always compile with the features they need; aqua-auth's
+//! own feature-lane matrix is unaffected by this crate.
 
 pub mod signers;
 
