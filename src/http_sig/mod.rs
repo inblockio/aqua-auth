@@ -65,6 +65,11 @@
 //! already seen, it never issues them.
 
 mod base;
+mod sign;
+#[cfg(test)]
+mod test_signers;
+
+pub use sign::sign_request;
 
 use crate::crypto_error::CryptoError;
 use crate::did_method::find_did_method;
