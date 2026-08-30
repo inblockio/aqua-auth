@@ -87,18 +87,18 @@ async fn serve(router: Router) -> (String, JoinHandle<()>) {
 }
 
 /// `GET /auth/challenge?did=...`, asserting 200 and returning the envelope.
-async fn fetch_challenge(
-    http: &reqwest::Client,
-    base_url: &str,
-    did: &str,
-) -> ChallengeEnvelope {
+async fn fetch_challenge(http: &reqwest::Client, base_url: &str, did: &str) -> ChallengeEnvelope {
     let response = http
         .get(format!("{base_url}/auth/challenge"))
         .query(&[("did", did)])
         .send()
         .await
         .expect("the peer must answer /auth/challenge");
-    assert_eq!(response.status(), StatusCode::OK, "challenge request failed");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "challenge request failed"
+    );
     response.json().await.expect("the envelope is JSON")
 }
 
@@ -124,12 +124,23 @@ async fn assert_real_client_logs_in(signer: Arc<dyn Signer>) {
     let (peer, base_url, server) =
         AquaPeer::bind_loopback("peer-a", CHALLENGE_TTL_SECS, signer.clone()).await;
 
-    // The peer was built around the address it actually got, not the other way
-    // round; if it were not, the challenge would name a port nobody is serving
-    // and `authenticate` below would die with UriOriginMismatch.
-    assert_eq!(base_url, format!("http://{}", peer.authority()));
-
     let http = reqwest::Client::new();
+
+    // HB1's load-bearing half, asserted directly rather than inferred from the
+    // login succeeding: the peer was built around the address it actually got,
+    // so its challenges name that authority. Were the order reversed, the
+    // challenge would name a port nobody serves, `authenticate` would refuse to
+    // sign it, and the failure would read as a client bug rather than a binding
+    // bug. This probe challenge is simply abandoned; nonces are cheap and it
+    // expires on its own.
+    let probe = fetch_challenge(&http, &base_url, signer.signer_did()).await;
+    let expected_uri = format!("URI: http://{}", peer.authority());
+    assert!(
+        probe.message.lines().any(|line| line == expected_uri),
+        "the challenge must carry the bound origin ({expected_uri}), got:\n{}",
+        probe.message
+    );
+
     let session = authenticate(&http, &base_url, &*signer)
         .await
         .expect("the real client must complete the login flow over loopback");
