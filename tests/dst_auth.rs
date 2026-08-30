@@ -23,7 +23,8 @@
 //!   `manual_async_fn`; the compiler still proves the future `Send` against
 //!   the trait's bound), and `local_addr` returns `std::io::Result` rather
 //!   than the `tokio::io::Result` re-export of the same type.
-//! - **Seeds:** [`BASELINE_SEED`], [`PARTITION_SEED`], [`DUPLICATE_SEED`].
+//! - **Seeds:** [`BASELINE_SEED`], [`PARTITION_SEED`], [`DUPLICATE_SEED`],
+//!   [`ALTERNATE_SEED`].
 //!
 //! ## Determinism scope
 //!
@@ -95,6 +96,10 @@ const PARTITION_SEED: u64 = 0x5EED_0002;
 
 /// Seed for the duplicate-delivery scenario.
 const DUPLICATE_SEED: u64 = 0x5EED_0003;
+
+/// A second schedule for the baseline body, so the stability scenario can show
+/// that the seed changes the interleaving and not the outcome.
+const ALTERNATE_SEED: u64 = 0x5EED_0004;
 
 /// Lower bound on per-message latency.
 const MIN_LATENCY: Duration = Duration::from_millis(50);
@@ -657,4 +662,32 @@ fn a_duplicated_session_post_mints_exactly_one_session() {
         signer.signer_did(),
         "the single minted token must still authenticate"
     );
+}
+
+/// The baseline body replayed under a second seed.
+///
+/// This is the determinism claim stated precisely: the seed decides the
+/// interleaving and the latency draws, and the login flow is expected to be
+/// insensitive to both. It deliberately does **not** claim that two seeds
+/// produce identical bytes; they cannot, because nonces, tokens, and keys come
+/// from `OsRng` and are outside the simulation's control. A flow that only
+/// works under one schedule would be a real defect, and this is the test that
+/// would catch it.
+#[test]
+fn the_login_flow_succeeds_under_either_seed() {
+    for seed in [BASELINE_SEED, ALTERNATE_SEED] {
+        let signer = signers::ed25519_did_key();
+        let outcome = run_baseline(seed, signer.clone());
+
+        assert_eq!(
+            outcome.session_did,
+            signer.signer_did(),
+            "seed {seed:#x} minted a session for the wrong principal"
+        );
+        assert_eq!(
+            outcome.whoami_did,
+            signer.signer_did(),
+            "seed {seed:#x} minted a token that does not authenticate"
+        );
+    }
 }
