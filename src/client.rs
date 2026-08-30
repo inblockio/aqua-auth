@@ -23,6 +23,18 @@ use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 ///
 /// The `sign_fn` takes the canonical CAIP-122 message and returns
 /// the hex-encoded signature (with or without `0x` prefix).
+///
+/// # Challenge binding
+///
+/// Before signing, the returned message is checked against what the client
+/// asked for: its identifier line must match the identifier derived from
+/// `did`, and its `URI:` line must have the same origin as `base_url` (scheme,
+/// host, port; paths ignored). Either mismatch refuses to sign. This kills the
+/// relay: a compromised endpoint that forwards a challenge minted for another
+/// aqua service presents a message whose URI origin is that service's, not the
+/// origin the client dialed, so the client never signs it. The `domain` line is
+/// not enforced, because it is a free-form label (deployed servers use
+/// non-hostnames such as `aqua-node`).
 pub async fn authenticate<F>(
     http: &reqwest::Client,
     base_url: &str,
@@ -67,6 +79,10 @@ where
             actual: actual.to_string(),
         });
     }
+
+    // 1b. Bind the challenge to the endpoint we actually dialed: the message's
+    //     URI origin must be ours, or a relayed challenge would get signed.
+    verify_uri_binding(&envelope.message, base_url)?;
 
     // 2. Sign the message
     let signature = sign_fn(&envelope.message).map_err(|e| AuthClientError::Sign(e.to_string()))?;
