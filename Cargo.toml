@@ -60,6 +60,18 @@ url = { version = "2", optional = true }
 tokio = { version = "1", features = ["full"] }
 rand = "0.8"
 
+# The end-to-end suites only. The published dependency surface of this crate is
+# unchanged: nothing below is reachable from the library.
+#
+# `tests/harness/` mounts the real stores and verifiers behind an axum Router,
+# and `tower`'s `ServiceExt::oneshot` drives that Router in-process, so the
+# server half runs end to end with no listener and no port. The directory crate
+# is a dev-dependency of its own dependency, which Cargo permits precisely for
+# this case (dev-dependency cycles are allowed).
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+aqua-auth-directory = { path = "aqua-auth-directory" }
+
 # The root package stays in place and remains the default cargo target here, so
 # a bare `cargo test` at the root still means "test aqua-auth". The directory
 # crate is a separate 0.x member on purpose: it tracks an IETF draft, and draft
