@@ -147,8 +147,10 @@ fn verify_uri_binding(message: &str, base_url: &str) -> Result<(), AuthClientErr
         },
     };
 
-    // Placeholders never parse as an origin, so any of the failure cases above
-    // lands here as a mismatch: the check fails closed by construction.
+    // The placeholders are distinct from each other and from every real origin
+    // (no origin starts with `<`), so any failure case above lands here as a
+    // mismatch, even when both sides carry the same unparsable text. The check
+    // fails closed by construction rather than by a separate branch.
     if message_origin == client_origin {
         Ok(())
     } else {
@@ -351,6 +353,14 @@ mod tests {
     fn uri_binding_malformed_base_url_fails_closed() {
         let msg = message_with_uri("https://example.com");
         assert_mismatch(verify_uri_binding(&msg, "example.com:3000"));
+    }
+
+    #[test]
+    fn uri_binding_identical_unparsable_values_still_fail_closed() {
+        // Neither side reduces to an origin, and the two placeholders differ,
+        // so equal garbage on both sides must not be read as a match.
+        let msg = message_with_uri("not-a-url");
+        assert_mismatch(verify_uri_binding(&msg, "not-a-url"));
     }
 
     #[test]
