@@ -46,3 +46,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 rand = "0.8"
+
+# The root package stays in place and remains the default cargo target here, so
+# a bare `cargo test` at the root still means "test aqua-auth". The directory
+# crate is a separate 0.x member on purpose: it tracks an IETF draft, and draft
+# churn must never force a semver bump on this crate.
+[workspace]
+members = [".", "aqua-auth-directory"]
+resolver = "2"
