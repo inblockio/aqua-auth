@@ -57,6 +57,8 @@ pub mod message;
 #[cfg(feature = "http")]
 pub mod session;
 #[cfg(feature = "http")]
+pub mod session_backend;
+#[cfg(feature = "http")]
 pub mod types;
 #[cfg(feature = "http")]
 pub mod wire;
@@ -70,9 +72,17 @@ pub use message::{build_message, MessageParams};
 #[cfg(feature = "http")]
 pub use session::SessionStore;
 #[cfg(feature = "http")]
+pub use session_backend::{build_backend, InMemoryBackend, SessionBackend, SessionBackendKind};
+#[cfg(feature = "http")]
 pub use types::{AuthenticatedDid, Challenge, Session, SessionInfo};
 #[cfg(feature = "http")]
 pub use wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
+
+// --- Behind `redis` feature (implies `http`) ---
+#[cfg(feature = "redis")]
+pub mod redis_backend;
+#[cfg(feature = "redis")]
+pub use redis_backend::RedisBackend;
 
 // --- Behind `client` feature ---
 #[cfg(feature = "client")]
@@ -92,6 +102,33 @@ pub use http_sig::{
 pub mod webauthn;
 #[cfg(feature = "webauthn")]
 pub use webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
+
+// Credential store (the persistence half of passkey support). The trait +
+// in-memory backend need no `redis`; the Redis backend adds it.
+#[cfg(feature = "webauthn")]
+pub mod webauthn_store;
+#[cfg(feature = "webauthn")]
+pub use webauthn_store::{
+    CredentialId, InMemoryWebauthnStore, NewCredential, StoredCredential,
+    WebauthnCredentialBackend, WebauthnStoreError,
+};
+
+// --- Behind `webauthn` + `redis` features ---
+#[cfg(all(feature = "webauthn", feature = "redis"))]
+pub mod redis_webauthn;
+#[cfg(all(feature = "webauthn", feature = "redis"))]
+pub use redis_webauthn::RedisWebauthnStore;
+
+// --- Behind `ceremony` feature (register/login over webauthn-rs) ---
+#[cfg(feature = "ceremony")]
+pub mod webauthn_ceremony;
+#[cfg(feature = "ceremony")]
+pub use webauthn_ceremony::{
+    build_webauthn, did_key_from_p256_compressed, login_finish, login_start,
+    p256_compressed_from_passkey, p256_compressed_from_passkey_blob, passkey_from_blob,
+    register_finish, register_start, user_handle_for, CeremonyError, FinishedLogin,
+    FinishedRegistration, RegisterMode, StartedRegistration, WebauthnConfig,
+};
 
 /// Verify a CAIP-122 session signature.
 ///
