@@ -128,6 +128,33 @@ impl SessionBackend for RedisBackend {
         removed > 0
     }
 
+    fn sessions_for_did(&self, did: &str) -> Vec<Session> {
+        let Some(mut conn) = self.lock() else {
+            return Vec::new();
+        };
+
+        // Served from the `aqua:did:{did}` SET this backend already
+        // maintains, so this is SMEMBERS + one GET per live token (bounded by
+        // `max_sessions_per_did`), never a keyspace scan. Tokens whose
+        // session key Redis has already expired via EXAT simply miss.
+        let tokens: Vec<String> = conn.smembers(did_key(did)).unwrap_or_default();
+        tokens
+            .into_iter()
+            .filter_map(|token| {
+                let raw: Option<String> = conn.get(session_key(&token)).ok()?;
+                raw.and_then(|s| serde_json::from_str::<Session>(&s).ok())
+            })
+            .collect()
+    }
+
+    fn purge_expired(&self, _now_secs: u64) -> usize {
+        // No-op by design. `insert` attaches `SET ... EXAT valid_until`, so
+        // Redis drops each session key at its own expiry without help. The
+        // default implementation would SCAN the whole keyspace and GET every
+        // session only to find that the expired ones are already gone.
+        0
+    }
+
     fn remove_all_for_did(&self, did: &str) -> usize {
         let Some(mut conn) = self.lock() else {
             return 0;

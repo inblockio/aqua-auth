@@ -146,9 +146,8 @@ impl SessionStore {
     fn enforce_per_did_cap(&self, did: &str) {
         let mut this_did: Vec<(String, u64)> = self
             .backend
-            .all()
+            .sessions_for_did(did)
             .into_iter()
-            .filter(|s| s.did == did)
             .map(|s| (s.token, s.created_at))
             .collect();
         if this_did.len() < self.max_sessions_per_did {
@@ -218,13 +217,13 @@ impl SessionStore {
     /// Remove all expired sessions. Best-effort under concurrency: a session
     /// created between this call's snapshot and its removal pass is simply
     /// swept on the next cycle.
+    ///
+    /// Delegated to [`SessionBackend::purge_expired`], so a backend whose
+    /// store expires entries on its own reports this as a no-op instead of
+    /// walking its keyspace to delete rows that are already gone.
     pub fn cleanup_expired(&self) {
         let now = Utc::now().timestamp() as u64;
-        for s in self.backend.all() {
-            if s.valid_until <= now {
-                self.backend.remove(&s.token);
-            }
-        }
+        self.backend.purge_expired(now);
     }
 
     /// Start a background task that periodically cleans up expired sessions
