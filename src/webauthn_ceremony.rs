@@ -66,7 +66,9 @@ pub fn build_webauthn(config: &dyn WebauthnConfig) -> Result<Webauthn, CeremonyE
     let origins: Vec<Url> = config
         .allowed_origins()
         .iter()
-        .map(|o| Url::parse(o).map_err(|e| CeremonyError::Internal(format!("invalid origin {o}: {e}"))))
+        .map(|o| {
+            Url::parse(o).map_err(|e| CeremonyError::Internal(format!("invalid origin {o}: {e}")))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let first = origins
         .first()

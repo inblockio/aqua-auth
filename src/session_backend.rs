@@ -193,9 +193,12 @@ mod tests {
     #[test]
     fn sessions_for_did_returns_only_that_dids_sessions() {
         let b = InMemoryBackend::new();
-        b.insert(session("did:key:zA", "a1", 9_999_999_999)).unwrap();
-        b.insert(session("did:key:zA", "a2", 9_999_999_999)).unwrap();
-        b.insert(session("did:key:zB", "b1", 9_999_999_999)).unwrap();
+        b.insert(session("did:key:zA", "a1", 9_999_999_999))
+            .unwrap();
+        b.insert(session("did:key:zA", "a2", 9_999_999_999))
+            .unwrap();
+        b.insert(session("did:key:zB", "b1", 9_999_999_999))
+            .unwrap();
 
         let mut a: Vec<String> = b
             .sessions_for_did("did:key:zA")

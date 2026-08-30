@@ -159,7 +159,9 @@ impl WebauthnCredentialBackend for InMemoryWebauthnStore {
         let mut map = self.creds.lock().map_err(|_| {
             WebauthnStoreError::Backend("in-memory credential store lock poisoned".into())
         })?;
-        let cred = map.get_mut(&cred_id.0).ok_or(WebauthnStoreError::NotFound)?;
+        let cred = map
+            .get_mut(&cred_id.0)
+            .ok_or(WebauthnStoreError::NotFound)?;
         if new_count > cred.sign_count {
             cred.sign_count = new_count;
         }
