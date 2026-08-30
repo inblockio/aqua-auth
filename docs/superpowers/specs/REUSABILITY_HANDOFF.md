@@ -1,5 +1,17 @@
 # aqua-rs-auth: Reusability, WebAuthn, and Inconsistencies Handoff
 
+> **SUPERSEDED, 2026-08-30.** Historical record, kept for its rationale; do not
+> read it as a description of the crate today. Written on 2026-05-20 against
+> `aqua-auth` 0.2.0, when WebAuthn did not exist in this crate at all. Since
+> then the `webauthn`, `ceremony`, `redis`, `http-sig` and `client` features
+> shipped, `client::authenticate` moved to the `Signer` trait, and the
+> backend-unification branch merged (0.6.0). Its Section 5/7 WebAuthn
+> deliverable is closed except for the account-linking API and the credential
+> data migration, which are tracked in
+> `docs/superpowers/specs/2026-08-30-siwx-oidc-ceremony-consolidation.md`.
+> Current state: `CLAUDE.md`, `SPEC.md`, `CHANGELOG.md`, `CONSUMERS.md`.
+> Moved here from `docs/REUSABILITY_HANDOFF.md`.
+
 **Date:** 2026-05-20
 **Crate:** `aqua-auth` (repo `aqua-rs-auth`), version `0.2.0`, branch `main`
 **Audience:** the engineer who will pick up this work

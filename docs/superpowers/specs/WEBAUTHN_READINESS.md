@@ -1,5 +1,22 @@
 # WebAuthn Readiness Assessment
 
+> **SUPERSEDED, 2026-08-30.** Historical record, kept for its rationale; do not
+> read its verdict as current. The "No, not ready" finding below was measured
+> on 2026-05-22 against `aqua-auth` 0.2.0 at HEAD `056cb34`, where the crate
+> held only the P-256 login-assertion verifier. The missing pieces it lists
+> shipped on the `feat/backend-unification` branch and merged into the main
+> line for 0.6.0: the `ceremony` feature (register/login over `webauthn-rs`,
+> `src/webauthn_ceremony.rs`), the credential store (`src/webauthn_store.rs`,
+> `src/redis_webauthn.rs`), and DID derivation from a passkey. aquafier-rs and
+> aqua-node both run that ceremony in production today.
+>
+> What remains open is narrower than this document's verdict: siwx-oidc's own
+> ceremony still has no aqua-auth equivalent for account linking, and its live
+> passkey credentials are stored in an incompatible layout that cannot be
+> migrated without a data plan. See
+> `docs/superpowers/specs/2026-08-30-siwx-oidc-ceremony-consolidation.md`.
+> Moved here from `docs/WEBAUTHN_READINESS.md`.
+
 **Date:** 2026-05-22
 **Crate:** `aqua-auth` (repo `aqua-rs-auth`), version `0.2.0`, branch `main`, HEAD `056cb34`
 **Assessed against:** `docs/REUSABILITY_HANDOFF.md` (dated 2026-05-20)

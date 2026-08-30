@@ -68,12 +68,20 @@ src/
   message.rs          # build_message, MessageParams (CAIP-122)
   challenge.rs        # ChallengeStore (nonce + TTL)
   session.rs          # SessionStore (token + background sweep)
+  session_backend.rs  # SessionBackend trait + InMemoryBackend (storage seam)
   types.rs            # Challenge, Session, SessionInfo, AuthenticatedDid
   wire.rs             # ChallengeEnvelope, SessionRequest, SessionResponse
   --- behind feature "client" ---
   client.rs           # authenticate(&dyn Signer) async client, URI-binding check
   --- behind feature "webauthn" ---
   webauthn.rs         # verify_webauthn_assertion(), WebAuthnAssertionParams
+  webauthn_store.rs   # WebauthnCredentialBackend trait, StoredCredential,
+                      #   InMemoryWebauthnStore
+  --- behind features "webauthn" + "redis" ---
+  redis_webauthn.rs   # RedisWebauthnStore (the shared production credential
+                      #   store; the only thing `redis` still compiles)
+  --- behind feature "ceremony" (implies "webauthn") ---
+  webauthn_ceremony.rs # register/login over webauthn-rs, passkey -> did:key
   --- behind feature "http-sig" (EXPERIMENTAL, tracks IETF draft) ---
   http_sig/
     mod.rs            # RequestParts, Profile, SignedHeaders, HttpSigError
@@ -100,10 +108,23 @@ IETF `webbotauth` WG adopts documents. Full rationale: SPEC.md section 11 and
 
 ### Store Backend
 
-Currently in-memory (`DashMap`). Non-persistent is acceptable, but the design should evolve toward:
+`SessionStore` drives a pluggable `SessionBackend` (`session_backend.rs`).
+`InMemoryBackend` (`DashMap`) is the only implementation this crate ships and
+the one every consumer runs. `SessionStore::with_backend` takes any
+`Arc<dyn SessionBackend>`, so a consumer needing durable or shared sessions
+implements the trait in the crate that owns its connection pool.
 
-- A pluggable store trait so backends can be swapped
-- Redis as the default production backend
+A Redis `SessionBackend` lived here until 0.6.0 and was removed: it had no
+users, blocked an async executor on a single `Mutex<redis::Connection>`, cost
+two full keyspace `SCAN`s per login, and leaked `redis::RedisError` into a
+crates.io-bound public API. The trait's two hot-path rules exist so a
+replacement does not repeat that: `sessions_for_did` must be served from a
+`did -> tokens` index (the login path calls it), and `all()` is cold-path
+introspection only.
+
+Passkey credentials are separate and *are* persisted: `WebauthnCredentialBackend`
+(`webauthn_store.rs`) with `InMemoryWebauthnStore` and `RedisWebauthnStore`
+(`redis_webauthn.rs`), the store aqua-node and aquafier share in production.
 
 ## Upstream Dependencies
 
@@ -111,8 +132,15 @@ Currently in-memory (`DashMap`). Non-persistent is acceptable, but the design sh
 
 ## Consumers
 
+Authoritative list, with each repo's pin, git URL spelling and feature set:
+**`CONSUMERS.md`**. Read it before any change to the public API; all
+consumers move together, and nothing in this repo verifies that they still
+build.
+
 - **aqua-node**: Primary server-side consumer
-- **aqua-fire**: Aquafier service
+- **aquafier-rs** (aqua-fire): Aquafier service
+- **aqua-state-viewer**: `client` feature
+- **siwx-oidc**: `webauthn` feature, unpinned
 - **Mobile apps**: Client-side auth via the `client` feature
 - **Web apps and CLIs**: Any client connecting to an aqua-node
 
@@ -135,9 +163,11 @@ cargo build                       # Default features (crypto/DID + Signer trait)
 cargo build --features http       # Session/auth layer
 cargo build --features client     # HTTP client (implies http)
 cargo build --features webauthn   # WebAuthn assertion verifier
+cargo build --features ceremony   # register/login ceremony (implies webauthn)
+cargo build --features redis      # Redis credential store (implies webauthn)
 cargo build --features http-sig   # RFC 9421 request signatures (experimental)
 cargo test                        # Default-feature tests
-cargo test --all-features         # Everything (approx. 247 lib + integration)
+cargo test --all-features         # Everything (264 lib + integration)
 cargo test -p aqua-auth-directory # The directory workspace member
 # E2E suites live in the testkit member (publish = false); no feature flags
 # needed, the testkit pins the features its suites require:
@@ -170,11 +200,31 @@ Challenge and session stores must test: creation, validation, TTL expiration, an
 
 ## Roadmap
 
-- [ ] Pluggable store trait with Redis backend, scoped to human web sessions
-      (per-request `http-sig` removes SessionStore from pure S2S paths)
+- [x] Pluggable store trait (`SessionBackend`, 0.6.0). Scoped to human web
+      sessions: per-request `http-sig` removes SessionStore from pure S2S
+      paths. A durable backend now belongs to the consumer that owns the pool,
+      not to this crate.
 - [ ] Accept-Signature server-issued nonces and RFC 9421 signed responses
       (mutual node-to-node auth); deferred, see SPEC.md section 11
-- [ ] CI/CD pipeline (GitHub Actions)
+- [ ] siwx-oidc ceremony consolidation: needs a passkey credential data
+      migration, an async credential-store trait, and an account-linking API.
+      Spec written, NOT executed:
+      `docs/superpowers/specs/2026-08-30-siwx-oidc-ceremony-consolidation.md`
+- [ ] Revisit the `webauthn-rs = "=0.6.1-dev"` exact prerelease pin before
+      publishing. The pin is deliberate: the serialized `Passkey` blob
+      (feature `danger-allow-state-serialisation`) must stay byte-compatible
+      across aqua-node, aquafier and this crate, so do not relax it casually.
+      It does not *block* publication (0.6.1-dev is published on crates.io and
+      is not yanked, verified 2026-08-30), but an `=` requirement on a
+      published library is a hard graph-wide lock: any downstream crate that
+      needs a different `webauthn-rs` gets an unresolvable graph, and the
+      pinned version carries no upstream stability promise. Publishing the
+      `ceremony` feature means exporting that lock to every user.
+- [ ] aqua-timestamps: orphaned consumer, `path = "../aqua-auth"` with no pin
+      and a statically broken `client::authenticate` call. Needs a decision,
+      see `CONSUMERS.md`.
+- [ ] CI/CD pipeline (GitHub Actions). `cargo fmt --check` is clean as of
+      0.6.0 and can be gated on.
 - [ ] crates.io publication prep (workspace: aqua-auth + aqua-auth-directory)
 
 <!-- gitnexus:start -->
