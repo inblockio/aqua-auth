@@ -40,7 +40,7 @@ mod harness;
 
 use aqua_auth::client::{authenticate, AuthClientError};
 use aqua_auth::wire::ChallengeEnvelope;
-use aqua_auth::{SignError, Signer};
+use aqua_auth::{build_message, MessageParams, SignError, Signer};
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -212,19 +212,24 @@ impl Signer for CountingSigner {
     }
 }
 
-/// The relay: it hands back the victim's challenge verbatim from its own
-/// origin, and stands ready to forward whatever signature it hopes to collect.
+/// A hostile server: it hands back one fixed challenge whatever DID is asked
+/// for, and stands ready to forward whatever signature it hopes to collect.
+///
+/// One router covers both attacks in this file, because the attack lives
+/// entirely in the envelope it is fed: a challenge minted by another origin is
+/// a relay, a challenge naming another DID is a tampered message. The server
+/// behaviour is identical either way.
 ///
 /// `forwards` counts arrivals at `/auth/session`. Zero is a second, independent
-/// witness to the same refusal: the client not only never signed, it never even
-/// spoke to the relay again.
-fn relay_router(stolen: ChallengeEnvelope, forwards: Arc<AtomicUsize>) -> Router {
+/// witness to the refusal: the client not only never signed, it never even
+/// spoke to the attacker again.
+fn hostile_router(envelope: ChallengeEnvelope, forwards: Arc<AtomicUsize>) -> Router {
     Router::new()
         .route(
             "/auth/challenge",
             get(move || {
-                let stolen = stolen.clone();
-                async move { Json(stolen) }
+                let envelope = envelope.clone();
+                async move { Json(envelope) }
             }),
         )
         .route(
@@ -253,7 +258,7 @@ async fn a_relayed_challenge_is_refused_before_the_key_is_touched() {
     let stolen = fetch_challenge(&http, &victim_url, client.signer_did()).await;
 
     let forwards = Arc::new(AtomicUsize::new(0));
-    let (relay_url, relay_server) = serve(relay_router(stolen, forwards.clone())).await;
+    let (relay_url, relay_server) = serve(hostile_router(stolen, forwards.clone())).await;
     assert_ne!(relay_url, victim_url, "the relay must be its own origin");
 
     let err = authenticate(&http, &relay_url, &client)
@@ -284,4 +289,112 @@ async fn a_relayed_challenge_is_refused_before_the_key_is_touched() {
 
     relay_server.abort();
     victim_server.abort();
+}
+
+// ── error mapping: what the caller can actually branch on ───────────────
+//
+// A client is only as useful as the distinctions its error type preserves. A
+// server that is merely broken and a server that is lying must not arrive as
+// the same variant, because the first deserves a retry and the second deserves
+// an alarm. These two tests pin that boundary over real HTTP.
+
+/// Build the challenge envelope a server would mint for `did` at `uri`.
+///
+/// Hand-built rather than fetched, so a hostile server can be handed a message
+/// that is well formed in every respect except the single one under test.
+fn envelope_for(did: &str, uri: &str) -> ChallengeEnvelope {
+    let now = chrono::Utc::now();
+    let nonce = format!("0x{}", "ab".repeat(32));
+    let message = build_message(&MessageParams {
+        did,
+        domain: "hostile",
+        uri,
+        nonce: &nonce,
+        issued_at: now,
+        expiration_time: now + chrono::Duration::minutes(5),
+    })
+    .expect("a supported DID yields a CAIP-122 message");
+
+    ChallengeEnvelope {
+        nonce,
+        message,
+        expires_at: 9_999_999_999,
+    }
+}
+
+/// The identifier line a CAIP-122 message carries for `did`: the EIP-55 address
+/// for `eip155`, the hex public key for the key-based namespaces.
+fn identifier_of(did: &str) -> String {
+    aqua_auth::find_did_method(did)
+        .expect("a harness signer's DID resolves to a DID method")
+        .address_for_message(did)
+        .expect("a harness signer's DID is well formed")
+}
+
+#[tokio::test]
+async fn a_server_that_fails_the_challenge_maps_to_the_http_variant() {
+    let (base_url, server) = serve(Router::new().route(
+        "/auth/challenge",
+        get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+    ))
+    .await;
+
+    let err = authenticate(
+        &reqwest::Client::new(),
+        &base_url,
+        &*signers::ed25519_did_key(),
+    )
+    .await
+    .expect_err("a 500 on the challenge cannot yield a session");
+
+    match err {
+        // The status is asserted, not just the variant: a transport failure
+        // (refused connection, closed socket) also lands in `Http`, and this
+        // test is about a server that answered and answered badly.
+        AuthClientError::Http(e) => assert_eq!(
+            e.status(),
+            Some(StatusCode::INTERNAL_SERVER_ERROR),
+            "the mapped error must carry the status the server actually sent"
+        ),
+        other => panic!("expected Http, got {other:?}"),
+    }
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_envelope_naming_another_did_dies_before_signing() {
+    let client = CountingSigner::wrapping(signers::ed25519_did_key());
+    let stranger = signers::p256_did_key();
+
+    // Bind first, then build the message around the address this server will
+    // actually answer on. That makes the `URI:` line honest, so the origin
+    // check passes and the identifier check is the only thing left that can
+    // fail: the test isolates one variable instead of relying on the client
+    // happening to check the identifier first.
+    let (listener, base_url) = bind().await;
+    let forwards = Arc::new(AtomicUsize::new(0));
+    let envelope = envelope_for(stranger.signer_did(), &base_url);
+    let server = serve_on(listener, hostile_router(envelope, forwards.clone()));
+
+    let err = authenticate(&reqwest::Client::new(), &base_url, &client)
+        .await
+        .expect_err("a message naming another DID must not be signed");
+
+    match err {
+        AuthClientError::MessageIdentifierMismatch { expected, actual } => {
+            assert_eq!(expected, identifier_of(client.signer_did()));
+            assert_eq!(
+                actual,
+                identifier_of(stranger.signer_did()),
+                "the error must report the identifier the server actually sent"
+            );
+        }
+        other => panic!("expected MessageIdentifierMismatch, got {other:?}"),
+    }
+
+    assert_eq!(client.calls(), 0, "the refusal must precede signing");
+    assert_eq!(forwards.load(Ordering::SeqCst), 0);
+
+    server.abort();
 }
