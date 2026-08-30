@@ -130,8 +130,11 @@ That trait is **async** as of 0.7.0, and every method returns `Result`. It was
 sync in 0.6.0 on the grounds that it matched "this crate's blocking-Redis
 pattern", but 0.6.0 is the release that deleted `RedisBackend`, so the
 justification outlived its referent. `RedisWebauthnStore` now holds a
-`redis::aio::MultiplexedConnection` (feature `redis/tokio-comp`) instead of a
-`Mutex<redis::Connection>`, and `RedisWebauthnStore::connect` is `async`.
+`redis::aio::ConnectionManager` (features `redis/tokio-comp` +
+`redis/connection-manager`) instead of a `Mutex<redis::Connection>`, and
+`RedisWebauthnStore::connect` is `async`. The manager rather than a bare
+`MultiplexedConnection` because the latter never reconnects: one Redis restart
+would poison the store for the rest of the process lifetime.
 
 ## Upstream Dependencies
 

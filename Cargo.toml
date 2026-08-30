@@ -73,11 +73,13 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 url = { version = "2", optional = true }
 
 # Behind `redis` feature. ASYNC API as of 0.7.0 (WebauthnCredentialBackend is
-# an async trait): `tokio-comp` gives us `get_multiplexed_async_connection()`,
-# which pipelines concurrent commands over one socket. That retires the
-# `Mutex<redis::Connection>` the sync API forced, and stops blocking Redis I/O
-# from running on tokio worker threads.
-redis = { version = "0.27", features = ["tokio-comp"], optional = true }
+# an async trait). `connection-manager` (which implies `tokio-comp`) gives us
+# `ConnectionManager`: multiplexed, so concurrent commands pipeline over one
+# socket instead of queueing behind the `Mutex<redis::Connection>` the sync API
+# forced, AND self-healing, so a Redis restart does not poison the store for the
+# rest of the process lifetime. A bare `MultiplexedConnection` gives the first
+# property without the second.
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

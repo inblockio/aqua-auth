@@ -48,16 +48,23 @@ release retires the sync trait.
   doing lazy `std::sync::OnceLock` initialisation need `tokio::sync::OnceCell`
   (or equivalent) instead.
 
-- **The `redis` cargo feature now enables `redis/tokio-comp`.** A crate that
-  depends on `aqua-auth`'s `redis` feature and also pins the `redis` crate
-  itself will see `tokio-comp` unified into its own build.
+- **The `redis` cargo feature now enables `redis/tokio-comp` and
+  `redis/connection-manager`.** A crate that depends on `aqua-auth`'s `redis`
+  feature and also pins the `redis` crate itself will see both unified into its
+  own build. (`connection-manager` does not imply `tokio-comp` in redis 0.27;
+  both are needed or the `aio` module fails to compile.)
 
 ### Changed
 
-- `RedisWebauthnStore` holds a `redis::aio::MultiplexedConnection` instead of
-  a `Mutex<redis::Connection>`. The single global mutex serialised every
-  credential operation process-wide; the multiplexer pipelines concurrent
-  commands over one socket, so the bottleneck is retired rather than moved.
+- `RedisWebauthnStore` holds a `redis::aio::ConnectionManager` instead of a
+  `Mutex<redis::Connection>`. The single global mutex serialised every
+  credential operation process-wide; the manager is multiplexed, so concurrent
+  commands pipeline over one socket and the bottleneck is retired rather than
+  moved. It is also self-healing, which a bare `MultiplexedConnection` is not:
+  that one never reconnects, so a single Redis restart would leave every later
+  credential operation failing with a broken pipe until the process itself
+  restarted. Found the hard way, by a test that shared one store across two
+  tokio runtimes.
 - `RedisWebauthnStore::list_for_did` now propagates a `SMEMBERS`/`GET` failure
   instead of returning an empty vec. Individual undecodable rows are still
   skipped, so one corrupt credential cannot strand the rest.

@@ -199,5 +199,6 @@ no source change at all.
   constructs the store at boot becomes `async fn` (aqua-node's
   `build_explorer_router` did).
 
-- **The `redis` feature now enables `redis/tokio-comp`.** If you also depend on
-  the `redis` crate directly, that feature unifies into your build.
+- **The `redis` feature now enables `redis/tokio-comp` and
+  `redis/connection-manager`.** If you also depend on the `redis` crate
+  directly, both unify into your build.

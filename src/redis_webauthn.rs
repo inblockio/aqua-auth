@@ -6,12 +6,14 @@
 //! aquafier via aqua-node) read and write. Only compiles with both features on.
 //!
 //! Uses the `redis` crate's ASYNC API over a
-//! [`redis::aio::MultiplexedConnection`]. Until 0.7.0 this was the sync API
-//! behind a `Mutex<redis::Connection>`, which serialised every credential
-//! operation process-wide and ran blocking I/O on tokio worker threads (no
-//! consumer wrapped it in `spawn_blocking`). A multiplexed connection pipelines
-//! concurrent commands over one socket and is cheap to clone, so the mutex is
-//! gone rather than merely relocated.
+//! [`redis::aio::ConnectionManager`]. Until 0.7.0 this was the sync API behind a
+//! `Mutex<redis::Connection>`, which serialised every credential operation
+//! process-wide and ran blocking I/O on tokio worker threads (no consumer
+//! wrapped it in `spawn_blocking`). The manager is multiplexed, so concurrent
+//! commands pipeline over one socket and the mutex is gone rather than merely
+//! relocated, and it reconnects on its own: a plain `MultiplexedConnection`
+//! never does, so one Redis restart would leave every later credential
+//! operation failing with a broken pipe until the process itself restarted.
 //!
 //! Key layout (credentials are persistent, NO TTL, unlike sessions):
 //! - `aqua:webauthn:cred:{b64url(credential_id)}` -> JSON [`StoredCredential`]
@@ -45,34 +47,35 @@ fn backend<E: std::fmt::Display>(e: E) -> WebauthnStoreError {
     WebauthnStoreError::Backend(e.to_string())
 }
 
-/// Redis-backed credential store over a multiplexed async connection.
+/// Redis-backed credential store over a self-healing multiplexed connection.
 ///
 /// Cloning the handle per call is the documented `redis` pattern: the
 /// multiplexer is shared, and commands from concurrent tasks are pipelined
 /// onto the one socket instead of queueing behind a lock.
 pub struct RedisWebauthnStore {
-    conn: redis::aio::MultiplexedConnection,
+    conn: redis::aio::ConnectionManager,
 }
 
 impl RedisWebauthnStore {
     /// Connect to Redis at `url` (e.g. `redis://127.0.0.1:6379`).
     ///
     /// Async as of 0.7.0, and still eager: the connection is established here,
-    /// so an unreachable Redis fails at boot rather than at first login.
+    /// so an unreachable Redis fails at boot rather than at first login. After
+    /// that the manager reconnects on its own, so a later Redis restart is a
+    /// blip rather than a permanent poisoning of the store.
     ///
     /// Errors are reported as [`WebauthnStoreError::Backend`] carrying the
     /// stringified `redis` error, so no `redis` type appears in this crate's
     /// public API.
     pub async fn connect(url: &str) -> Result<Self, WebauthnStoreError> {
         let client = redis::Client::open(url).map_err(backend)?;
-        let conn = client
-            .get_multiplexed_async_connection()
+        let conn = redis::aio::ConnectionManager::new(client)
             .await
             .map_err(backend)?;
         Ok(Self { conn })
     }
 
-    fn conn(&self) -> redis::aio::MultiplexedConnection {
+    fn conn(&self) -> redis::aio::ConnectionManager {
         self.conn.clone()
     }
 
