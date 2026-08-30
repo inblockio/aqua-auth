@@ -45,7 +45,7 @@ pub use key::{ed25519_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite};
 pub use peer::PeerMethod;
 pub use pkh::{Eip155Suite, PkhMethod};
 pub use principal::{authenticate, Principal};
-pub use signer::{SignError, Signer};
+pub use signer::{FnSigner, SignError, Signer};
 
 // --- Behind `http` feature (session/auth layer) ---
 #[cfg(feature = "http")]
