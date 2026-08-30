@@ -19,7 +19,7 @@
 //!   dial the simulated network, is deliberately **not** copied: this suite
 //!   hand-rolls HTTP/1.1 instead, and reqwest is out of scope under
 //!   simulation.
-//! - **Seeds:** [`BASELINE_SEED`].
+//! - **Seeds:** [`BASELINE_SEED`], [`PARTITION_SEED`].
 //!
 //! ## Determinism scope
 //!
@@ -86,11 +86,30 @@ const CHALLENGE_TTL_SECS: u64 = 300;
 /// Seed for the plain latency scenario.
 const BASELINE_SEED: u64 = 0x5EED_0001;
 
+/// Seed for the partition-then-heal scenario.
+const PARTITION_SEED: u64 = 0x5EED_0002;
+
 /// Lower bound on per-message latency.
 const MIN_LATENCY: Duration = Duration::from_millis(50);
 
 /// Upper bound on per-message latency.
 const MAX_LATENCY: Duration = Duration::from_millis(200);
+
+/// How long one attempt may take before the client abandons it and counts a
+/// failure. A partition drops packets silently rather than refusing them, so
+/// without a bound an attempt would never fail at all. Simulated time.
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Simulated pause between retries.
+const RETRY_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Hard cap on retries, so a scenario that never heals fails fast and names
+/// itself instead of spinning until the simulation duration runs out.
+const MAX_ATTEMPTS: usize = 20;
+
+/// Simulated time to hold the partition before repairing it. Several attempt
+/// cycles long, so the client is guaranteed to have failed before the heal.
+const HEAL_AFTER: Duration = Duration::from_secs(3);
 
 // ---------------------------------------------------------------------------
 // The serve glue
@@ -287,6 +306,28 @@ async fn fetch_challenge(did: &str) -> IoResult<ChallengeEnvelope> {
     serde_json::from_slice(&body).map_err(|e| Error::new(ErrorKind::InvalidData, e))
 }
 
+/// Fetch a challenge, retrying while the network refuses to carry it.
+///
+/// Returns the envelope and the number of attempts that failed first. The loop
+/// is bounded twice over: each attempt by [`ATTEMPT_TIMEOUT`], the whole loop
+/// by [`MAX_ATTEMPTS`], so a network that never heals produces a named failure
+/// rather than a hang.
+async fn fetch_challenge_with_retries(did: &str) -> IoResult<(ChallengeEnvelope, usize)> {
+    let mut failed_attempts = 0;
+    for _ in 0..MAX_ATTEMPTS {
+        if let Ok(Ok(envelope)) = tokio::time::timeout(ATTEMPT_TIMEOUT, fetch_challenge(did)).await
+        {
+            return Ok((envelope, failed_attempts));
+        }
+        failed_attempts += 1;
+        tokio::time::sleep(RETRY_BACKOFF).await;
+    }
+
+    Err(Error::other(format!(
+        "the challenge never arrived: all {MAX_ATTEMPTS} attempts failed"
+    )))
+}
+
 /// Sign the challenge message and build the body to post.
 async fn sign_challenge(signer: &dyn Signer, envelope: ChallengeEnvelope) -> IoResult<SessionRequest> {
     let signature = signer
@@ -341,6 +382,9 @@ struct Recorded {
     session_did: String,
     /// The DID `/whoami` reported for the minted token.
     whoami_did: String,
+    /// Attempts that failed before the flow got through. Zero unless the
+    /// scenario broke the network first.
+    failed_attempts: usize,
 }
 
 /// A slot the client writes its outcome into. Single-threaded under the sim,
@@ -360,9 +404,15 @@ fn recorded(sink: &Sink) -> Recorded {
         .expect("the simulated client must have recorded an outcome")
 }
 
-/// Challenge, sign, session, `/whoami`: the whole flow, no retries.
-async fn login(signer: &dyn Signer) -> IoResult<Recorded> {
-    let envelope = fetch_challenge(signer.signer_did()).await?;
+/// Sign an already-fetched challenge, exchange it for a session, and prove the
+/// token authenticates. Returns the session DID and the DID `/whoami` reports.
+///
+/// Split from [`login`] so the partition scenario can retry only the part that
+/// runs on a broken link and then share the rest verbatim.
+async fn finish_login(
+    signer: &dyn Signer,
+    envelope: ChallengeEnvelope,
+) -> IoResult<(String, String)> {
     let session_request = sign_challenge(signer, envelope).await?;
     let body = post_session(&session_request)
         .await?
@@ -370,10 +420,18 @@ async fn login(signer: &dyn Signer) -> IoResult<Recorded> {
     let session: SessionResponse =
         serde_json::from_slice(&body).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
     let whoami_did = whoami(&session.token).await?;
+    Ok((session.did, whoami_did))
+}
+
+/// Challenge, sign, session, `/whoami`: the whole flow, no retries.
+async fn login(signer: &dyn Signer) -> IoResult<Recorded> {
+    let envelope = fetch_challenge(signer.signer_did()).await?;
+    let (session_did, whoami_did) = finish_login(signer, envelope).await?;
 
     Ok(Recorded {
-        session_did: session.did,
+        session_did,
         whoami_did,
+        failed_attempts: 0,
     })
 }
 
@@ -444,5 +502,67 @@ fn login_completes_under_injected_latency() {
         outcome.whoami_did,
         signer.signer_did(),
         "the minted token must authenticate the same principal"
+    );
+}
+
+/// The link is cut before the client says a word, then repaired part way
+/// through its retry loop. Stepping the simulation by hand keeps the fault
+/// injection in the test rather than in the client: the client only knows that
+/// attempts fail, never why or when they will stop failing.
+#[test]
+fn login_survives_a_partition_that_heals() {
+    let signer = signers::ed25519_did_key();
+    let peer = simulated_peer(signer.clone());
+    let mut sim = simulation(PARTITION_SEED);
+    host_peer(&mut sim, &peer);
+
+    let sink = sink();
+    let client_sink = sink.clone();
+    let client_signer = signer.clone();
+    sim.client(CLIENT_HOST, async move {
+        let signer = client_signer.as_ref();
+        let (envelope, failed_attempts) =
+            fetch_challenge_with_retries(signer.signer_did()).await?;
+        let (session_did, whoami_did) = finish_login(signer, envelope).await?;
+        *client_sink.lock().unwrap() = Some(Recorded {
+            session_did,
+            whoami_did,
+            failed_attempts,
+        });
+        Ok(())
+    });
+
+    sim.partition(CLIENT_HOST, SERVER_HOST);
+
+    let mut healed = false;
+    loop {
+        if !healed && sim.elapsed() >= HEAL_AFTER {
+            sim.repair(CLIENT_HOST, SERVER_HOST);
+            healed = true;
+        }
+        if sim.step().expect("the simulation must not fault") {
+            break;
+        }
+    }
+
+    assert!(
+        healed,
+        "the client finished before the heal, so the partition proved nothing"
+    );
+
+    let outcome = recorded(&sink);
+    assert!(
+        outcome.failed_attempts > 0,
+        "the partition must have cost the client at least one attempt"
+    );
+    assert_eq!(
+        outcome.session_did,
+        signer.signer_did(),
+        "the flow must complete once the link is repaired"
+    );
+    assert_eq!(
+        outcome.whoami_did,
+        signer.signer_did(),
+        "the token minted after the heal must authenticate"
     );
 }
