@@ -23,6 +23,18 @@ use crate::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
 ///
 /// The `sign_fn` takes the canonical CAIP-122 message and returns
 /// the hex-encoded signature (with or without `0x` prefix).
+///
+/// # Challenge binding
+///
+/// Before signing, the returned message is checked against what the client
+/// asked for: its identifier line must match the identifier derived from
+/// `did`, and its `URI:` line must have the same origin as `base_url` (scheme,
+/// host, port; paths ignored). Either mismatch refuses to sign. This kills the
+/// relay: a compromised endpoint that forwards a challenge minted for another
+/// aqua service presents a message whose URI origin is that service's, not the
+/// origin the client dialed, so the client never signs it. The `domain` line is
+/// not enforced, because it is a free-form label (deployed servers use
+/// non-hostnames such as `aqua-node`).
 pub async fn authenticate<F>(
     http: &reqwest::Client,
     base_url: &str,
@@ -68,6 +80,10 @@ where
         });
     }
 
+    // 1b. Bind the challenge to the endpoint we actually dialed: the message's
+    //     URI origin must be ours, or a relayed challenge would get signed.
+    verify_uri_binding(&envelope.message, base_url)?;
+
     // 2. Sign the message
     let signature = sign_fn(&envelope.message).map_err(|e| AuthClientError::Sign(e.to_string()))?;
 
@@ -105,6 +121,71 @@ fn urlencoded(s: &str) -> String {
     s.replace(':', "%3A")
 }
 
+/// Require the challenge message to be bound to the endpoint the client dialed.
+///
+/// Extracts the `URI:` line from the CAIP-122 message and compares its origin
+/// (scheme, lowercased host, port with default-port normalization) against the
+/// origin of `base_url`. Paths, query strings and fragments are ignored on both
+/// sides: only the origin is load-bearing.
+///
+/// Fails closed. A missing `URI:` line, an empty value, a URI that does not
+/// parse, a URI with no host (e.g. `file:///x`), or an unparsable `base_url`
+/// all yield [`AuthClientError::UriOriginMismatch`] rather than a pass.
+///
+/// The free-form `domain` line (the first line of the message) is deliberately
+/// NOT enforced: deployed servers set it to a service label such as
+/// `aqua-node` rather than a hostname, so it carries no origin to compare.
+fn verify_uri_binding(message: &str, base_url: &str) -> Result<(), AuthClientError> {
+    let client_origin =
+        origin_of(base_url).unwrap_or_else(|| format!("<unparsable base_url: {base_url}>"));
+
+    let message_origin = match uri_line(message) {
+        None => "<message missing URI line>".to_string(),
+        Some(uri) => match origin_of(uri) {
+            Some(origin) => origin,
+            None => format!("<unparsable URI line: {uri}>"),
+        },
+    };
+
+    // The placeholders are distinct from each other and from every real origin
+    // (no origin starts with `<`), so any failure case above lands here as a
+    // mismatch, even when both sides carry the same unparsable text. The check
+    // fails closed by construction rather than by a separate branch.
+    if message_origin == client_origin {
+        Ok(())
+    } else {
+        Err(AuthClientError::UriOriginMismatch {
+            message_origin,
+            client_origin,
+        })
+    }
+}
+
+/// Value of the `URI: ` line of a CAIP-122 message, if present and non-empty.
+///
+/// The prefix must start the line, as CAIP-122 and SIWE specify. Matching an
+/// indented occurrence would let the free-form statement block shadow the real
+/// header line, so anything else fails closed.
+fn uri_line(message: &str) -> Option<&str> {
+    message
+        .split('\n')
+        .find_map(|line| line.trim_end_matches('\r').strip_prefix("URI:"))
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty())
+}
+
+/// Canonical `scheme://host[:port]` origin, with the scheme's default port made
+/// explicit so `https://x` and `https://x:443` compare equal.
+fn origin_of(raw: &str) -> Option<String> {
+    let url = url::Url::parse(raw).ok()?;
+    let scheme = url.scheme().to_ascii_lowercase();
+    let host = url.host_str()?.to_ascii_lowercase();
+    match url.port_or_known_default() {
+        Some(port) => Some(format!("{scheme}://{host}:{port}")),
+        None => Some(format!("{scheme}://{host}")),
+    }
+}
+
 /// Errors from the client authentication flow.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthClientError {
@@ -116,4 +197,178 @@ pub enum AuthClientError {
     Auth(#[from] AuthError),
     #[error("server message identifier mismatch: expected {expected}, got {actual}")]
     MessageIdentifierMismatch { expected: String, actual: String },
+    #[error("challenge URI origin mismatch: message says {message_origin}, client dialed {client_origin}")]
+    UriOriginMismatch {
+        message_origin: String,
+        client_origin: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal CAIP-122 message carrying the given `URI:` line.
+    fn message_with_uri(uri: &str) -> String {
+        format!(
+            "aqua-node wants you to sign in with your Ed25519 account:\n\
+             0xaabb\n\
+             \n\
+             Sign in to Aqua Node\n\
+             \n\
+             URI: {uri}\n\
+             Version: 1\n\
+             Nonce: 0xdeadbeef\n\
+             Issued At: 2026-08-30T12:00:00.000Z\n\
+             Expiration Time: 2026-08-30T12:05:00.000Z"
+        )
+    }
+
+    fn assert_mismatch(result: Result<(), AuthClientError>) {
+        match result {
+            Err(AuthClientError::UriOriginMismatch { .. }) => {}
+            other => panic!("expected UriOriginMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn uri_binding_same_origin_passes() {
+        let msg = message_with_uri("https://timestamp.inblock.io");
+        assert!(verify_uri_binding(&msg, "https://timestamp.inblock.io").is_ok());
+    }
+
+    #[test]
+    fn uri_binding_ignores_trailing_slash_and_path_on_base_url() {
+        let msg = message_with_uri("http://127.0.0.1:3000");
+        assert!(verify_uri_binding(&msg, "http://127.0.0.1:3000/").is_ok());
+        assert!(verify_uri_binding(&msg, "http://127.0.0.1:3000/api/v1").is_ok());
+        assert!(verify_uri_binding(&msg, "http://127.0.0.1:3000/api?x=1#frag").is_ok());
+    }
+
+    #[test]
+    fn uri_binding_ignores_path_on_message_uri() {
+        let msg = message_with_uri("http://127.0.0.1:3000/auth/challenge");
+        assert!(verify_uri_binding(&msg, "http://127.0.0.1:3000").is_ok());
+    }
+
+    #[test]
+    fn uri_binding_host_comparison_is_case_insensitive() {
+        let msg = message_with_uri("https://Timestamp.INBLOCK.io");
+        assert!(verify_uri_binding(&msg, "https://timestamp.inblock.io").is_ok());
+    }
+
+    #[test]
+    fn uri_binding_tolerates_crlf_line_endings() {
+        let msg = message_with_uri("https://timestamp.inblock.io").replace('\n', "\r\n");
+        assert!(verify_uri_binding(&msg, "https://timestamp.inblock.io").is_ok());
+    }
+
+    #[test]
+    fn uri_binding_different_host_fails() {
+        // The relay case: a compromised endpoint hands back a challenge minted
+        // for a different service.
+        let msg = message_with_uri("https://victim.example");
+        let err = verify_uri_binding(&msg, "https://relay.example").unwrap_err();
+        match err {
+            AuthClientError::UriOriginMismatch {
+                message_origin,
+                client_origin,
+            } => {
+                assert_eq!(message_origin, "https://victim.example:443");
+                assert_eq!(client_origin, "https://relay.example:443");
+            }
+            other => panic!("expected UriOriginMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn uri_binding_different_port_fails() {
+        let msg = message_with_uri("http://127.0.0.1:3000");
+        assert_mismatch(verify_uri_binding(&msg, "http://127.0.0.1:3001"));
+    }
+
+    #[test]
+    fn uri_binding_different_scheme_fails() {
+        let msg = message_with_uri("https://example.com:8443");
+        assert_mismatch(verify_uri_binding(&msg, "http://example.com:8443"));
+    }
+
+    #[test]
+    fn uri_binding_explicit_https_port_equals_default() {
+        let msg = message_with_uri("https://example.com:443");
+        assert!(verify_uri_binding(&msg, "https://example.com").is_ok());
+
+        let msg = message_with_uri("https://example.com");
+        assert!(verify_uri_binding(&msg, "https://example.com:443/").is_ok());
+    }
+
+    #[test]
+    fn uri_binding_explicit_http_port_equals_default() {
+        let msg = message_with_uri("http://example.com:80");
+        assert!(verify_uri_binding(&msg, "http://example.com").is_ok());
+    }
+
+    #[test]
+    fn uri_binding_missing_uri_line_fails_closed() {
+        let msg = "aqua-node wants you to sign in with your Ed25519 account:\n\
+                   0xaabb\n\
+                   \n\
+                   Sign in to Aqua Node\n\
+                   \n\
+                   Version: 1\n\
+                   Nonce: 0xdeadbeef";
+        assert_mismatch(verify_uri_binding(msg, "https://example.com"));
+    }
+
+    #[test]
+    fn uri_binding_empty_uri_value_fails_closed() {
+        let msg = message_with_uri("");
+        assert_mismatch(verify_uri_binding(&msg, "https://example.com"));
+    }
+
+    #[test]
+    fn uri_binding_malformed_message_uri_fails_closed() {
+        let msg = message_with_uri("not-a-url");
+        assert_mismatch(verify_uri_binding(&msg, "https://example.com"));
+    }
+
+    #[test]
+    fn uri_binding_message_uri_without_host_fails_closed() {
+        let msg = message_with_uri("file:///etc/passwd");
+        assert_mismatch(verify_uri_binding(&msg, "https://example.com"));
+    }
+
+    #[test]
+    fn uri_binding_indented_uri_line_does_not_count() {
+        // Only a line that starts with `URI:` is the header line; an indented
+        // one lives in the free-form statement block and must not satisfy the
+        // check.
+        // Written on one line: a trailing `\` in a Rust string literal also
+        // eats the next line's leading whitespace, which would defeat the test.
+        let msg = "aqua-node wants you to sign in with your Ed25519 account:\n0xaabb\n\n  URI: https://example.com\n\nVersion: 1";
+        assert_mismatch(verify_uri_binding(msg, "https://example.com"));
+    }
+
+    #[test]
+    fn uri_binding_malformed_base_url_fails_closed() {
+        let msg = message_with_uri("https://example.com");
+        assert_mismatch(verify_uri_binding(&msg, "example.com:3000"));
+    }
+
+    #[test]
+    fn uri_binding_identical_unparsable_values_still_fail_closed() {
+        // Neither side reduces to an origin, and the two placeholders differ,
+        // so equal garbage on both sides must not be read as a match.
+        let msg = message_with_uri("not-a-url");
+        assert_mismatch(verify_uri_binding(&msg, "not-a-url"));
+    }
+
+    #[test]
+    fn uri_binding_ignores_free_form_domain_line() {
+        // Deployed servers label the first line "aqua-node", not a hostname.
+        // Only the URI origin is enforced, so this must pass.
+        let msg = message_with_uri("https://timestamp.inblock.io");
+        assert!(msg.starts_with("aqua-node wants you to sign in"));
+        assert!(verify_uri_binding(&msg, "https://timestamp.inblock.io").is_ok());
+    }
 }

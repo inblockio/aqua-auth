@@ -75,6 +75,33 @@ pub(crate) fn verify_with_key(
     }
 }
 
+/// Extract the raw 32-byte Ed25519 public key from a `did:key:z6Mk...` DID.
+///
+/// Companion to [`crate::did::pubkey_from_ed25519_did`], which reads the
+/// `did:pkh:ed25519:0x{hex}` spelling of the same underlying key. Both
+/// spellings are accepted at login and are deliberately distinct principals
+/// (see #182), so a caller holding raw key material must pick the parser that
+/// matches the spelling it was given; neither parser accepts the other form.
+///
+/// Exists so that key-advertisement code (the `aqua-auth-directory` crate)
+/// can publish the JWK `x` member without re-implementing multibase and
+/// multicodec decoding, which would leave two disagreeing definitions of what
+/// a valid `did:key` is.
+pub fn ed25519_pubkey_from_did_key(did: &str) -> Result<[u8; 32], CryptoError> {
+    let z_body = did
+        .strip_prefix("did:key:z")
+        .ok_or_else(|| CryptoError::InvalidDid(format!("expected did:key DID: {did}")))?;
+    match decode_multibase_key(z_body)? {
+        KeyType::Ed25519(raw) => raw.try_into().map_err(|_| {
+            CryptoError::InvalidDid("Ed25519 public key must be 32 bytes".to_string())
+        }),
+        other => Err(CryptoError::InvalidDid(format!(
+            "expected an Ed25519 did:key, got {}",
+            key_type_label(&other)
+        ))),
+    }
+}
+
 pub(crate) fn key_type_label(key: &KeyType) -> &'static str {
     match key {
         KeyType::Ed25519(_) => "Ed25519",
@@ -239,6 +266,28 @@ mod tests {
         let did = ed25519_did(&key);
         let addr = KeyMethod.address_for_message(&did).unwrap();
         assert!(addr.starts_with("z6Mk"));
+    }
+
+    #[test]
+    fn ed25519_pubkey_from_did_key_roundtrip() {
+        let key = Ed25519SigningKey::generate(&mut OsRng);
+        let did = ed25519_did(&key);
+        let raw = ed25519_pubkey_from_did_key(&did).unwrap();
+        assert_eq!(&raw, key.verifying_key().as_bytes());
+    }
+
+    #[test]
+    fn ed25519_pubkey_from_did_key_rejects_p256() {
+        let key = P256SigningKey::random(&mut OsRng);
+        assert!(ed25519_pubkey_from_did_key(&p256_did(&key)).is_err());
+    }
+
+    #[test]
+    fn ed25519_pubkey_from_did_key_rejects_pkh_spelling() {
+        // The did:pkh spelling is a separate principal with its own parser
+        // (did::pubkey_from_ed25519_did); this one accepts did:key only.
+        let did = format!("did:pkh:ed25519:0x{}", hex::encode([0xAAu8; 32]));
+        assert!(ed25519_pubkey_from_did_key(&did).is_err());
     }
 
     #[test]

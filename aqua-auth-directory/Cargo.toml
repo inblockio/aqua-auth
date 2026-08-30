@@ -1,0 +1,22 @@
+[package]
+name = "aqua-auth-directory"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/inblockio/aqua-rs-auth"
+description = "Public-key advertisement for Aqua services: a JWKS directory per draft-meunier-webbotauth-httpsig-directory plus an Aqua-native identity document. Public keys only, never custody."
+
+[dependencies]
+# NOTE: when the root crate's version changes (the plan bumps it to 0.5.0 in
+# Task 5), this requirement must be bumped with it. Cargo checks a path
+# dependency's actual version against the requirement, so a stale req here
+# fails resolution rather than silently drifting.
+aqua-auth = { path = "..", version = "0.4" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# RFC 7638 thumbprints are SHA-256, not SHA3-256. SHA3-256 is an aqua-tree
+# invariant and deliberately does not apply here.
+sha2 = "0.10"
+base64 = "0.21"
+thiserror = "2"
