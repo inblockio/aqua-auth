@@ -1,6 +1,6 @@
 [package]
 name = "aqua-auth"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 license = "Apache-2.0"
 readme = "README.md"
@@ -72,12 +72,14 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # dependency tree, so this adds no new code to the build.
 url = { version = "2", optional = true }
 
-# Behind `redis` feature. Sync API only (WebauthnCredentialBackend is a sync
-# trait): default features give us `redis::Client` + `get_connection()`
-# (blocking `redis::Connection`). Deliberately NOT enabling `tokio-comp`/`aio`/
-# `connection-manager`, which are async-only and would need a runtime handle
-# inside sync trait methods.
-redis = { version = "0.27", optional = true }
+# Behind `redis` feature. ASYNC API as of 0.7.0 (WebauthnCredentialBackend is
+# an async trait). `connection-manager` (which implies `tokio-comp`) gives us
+# `ConnectionManager`: multiplexed, so concurrent commands pipeline over one
+# socket instead of queueing behind the `Mutex<redis::Connection>` the sync API
+# forced, AND self-healing, so a Redis restart does not poison the store for the
+# rest of the process lifetime. A bare `MultiplexedConnection` gives the first
+# property without the second.
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

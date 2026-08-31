@@ -6,6 +6,69 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-31
+
+Async credential store. 0.6.0 removed the Redis *session* backend, which was
+the "blocking-Redis pattern" that `WebauthnCredentialBackend` cited to justify
+being sync. The justification outlived its referent by one release; this
+release retires the sync trait.
+
+### Breaking
+
+- **`WebauthnCredentialBackend` is now `#[async_trait]`.** Every method is
+  `async`. `InMemoryWebauthnStore` and `RedisWebauthnStore` move with it.
+
+  Why: sync forecloses and async does not. An in-memory backend pays nothing
+  to be async, whereas a sync trait makes a correct async implementation
+  impossible, since `block_on` inside a tokio worker deadlocks. That is
+  precisely why siwx-oidc (whose Redis client is async) could not adopt this
+  store. Meanwhile the primary consumer, aqua-node, had already written the
+  async version by hand: `WebauthnCredentialStore` in
+  `crates/aqua-node-api/src/webauthn/store.rs`, same method names, same
+  `NewCredential`/`StoredCredential` shape. No consumer used `spawn_blocking`,
+  the escape hatch the old doc comment offered, so blocking Redis I/O was
+  running on tokio worker threads in production.
+
+  Migration for implementors: add `use async_trait::async_trait;`, put
+  `#[async_trait]` on the `impl`, mark each method `async fn`. An in-memory
+  implementation needs no other change, as long as no lock guard is held
+  across an `.await`.
+
+- **`list_for_did` and `get_by_id` now return `Result`.** They were
+  `Vec<StoredCredential>` and `Option<StoredCredential>`, so a backend failure
+  was indistinguishable from "this DID has no credentials" and "no such
+  credential": a Redis blip silently degraded to an empty `allowCredentials`
+  list or a failed login instead of a 5xx. Absent rows are still the cheap
+  non-error path (`Ok(vec![])`, `Ok(None)`); only real backend failures are
+  `Err`. This also makes the trait signature-compatible with aqua-node's
+  hand-written async trait.
+
+- **`RedisWebauthnStore::connect` is now `async`.** It stays eager, so an
+  unreachable Redis still fails at boot rather than at first login. Callers
+  doing lazy `std::sync::OnceLock` initialisation need `tokio::sync::OnceCell`
+  (or equivalent) instead.
+
+- **The `redis` cargo feature now enables `redis/tokio-comp` and
+  `redis/connection-manager`.** A crate that depends on `aqua-auth`'s `redis`
+  feature and also pins the `redis` crate itself will see both unified into its
+  own build. (`connection-manager` does not imply `tokio-comp` in redis 0.27;
+  both are needed or the `aio` module fails to compile.)
+
+### Changed
+
+- `RedisWebauthnStore` holds a `redis::aio::ConnectionManager` instead of a
+  `Mutex<redis::Connection>`. The single global mutex serialised every
+  credential operation process-wide; the manager is multiplexed, so concurrent
+  commands pipeline over one socket and the bottleneck is retired rather than
+  moved. It is also self-healing, which a bare `MultiplexedConnection` is not:
+  that one never reconnects, so a single Redis restart would leave every later
+  credential operation failing with a broken pipe until the process itself
+  restarted. Found the hard way, by a test that shared one store across two
+  tokio runtimes.
+- `RedisWebauthnStore::list_for_did` now propagates a `SMEMBERS`/`GET` failure
+  instead of returning an empty vec. Individual undecodable rows are still
+  skipped, so one corrupt credential cannot strand the rest.
+
 ## [0.6.0] - 2026-08-30
 
 Fork-healing release. `main` (http-sig, the directory crate, the async

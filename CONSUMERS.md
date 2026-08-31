@@ -59,6 +59,17 @@ config key and its boot wiring were removed when the backend was cut in 0.6.0.
 It keeps `redis` for `RedisWebauthnStore`, the passkey credential store, which
 is genuinely deployed.
 
+Until 0.7.0 it also carried a **duplicate of this crate's credential store**:
+`WebauthnCredentialStore` in `crates/aqua-node-api/src/webauthn/store.rs`, an
+async trait with the same method names over field-for-field copies of
+`CredentialId`, `NewCredential` and `StoredCredential`, plus a
+`RedisWebauthnCredentialStore` adapter converting between the two type families.
+It existed because this crate's trait was sync and a sync trait cannot host an
+async backend. 0.7.0 made the trait async, so aqua-node's trait and types are
+now aliases for this crate's and the adapter is deleted. Anything that names
+`aqua_node_api::webauthn::{StoredCredential, StoreError, ...}` still compiles;
+those names now resolve here.
+
 ### aquafier-rs
 
 `crates/aquafier-auth/src/webauthn.rs` names `aqua_auth::RedisWebauthnStore`
@@ -161,3 +172,33 @@ keep compatible.
 
 - **The `redis` feature** no longer implies `http` and now implies `webauthn`.
   Declare `http` yourself if you use the session layer.
+
+## Migrating to 0.7.0
+
+One breaking change, in the WebAuthn credential store. A consumer that does not
+enable `webauthn` is unaffected; `aqua-state-viewer` (feature `client`) needed
+no source change at all.
+
+- **`WebauthnCredentialBackend` is `#[async_trait]`.** Add
+  `use async_trait::async_trait;`, put `#[async_trait]` on the `impl`, mark each
+  method `async fn`. An in-memory or embedded-KV implementation needs nothing
+  else, as long as no lock guard is held across an `.await`.
+
+- **`list_for_did` and `get_by_id` return `Result`.** They were `Vec` and
+  `Option`, so a backend failure looked exactly like "no credentials" and "no
+  such credential". Callers that used to get a value now get `Result<value>`;
+  handle the error rather than `unwrap_or_default()`, which reinstates the bug.
+
+- **`delete` still returns `Result<bool, _>`**, unchanged, but note that
+  aqua-node's alias inherits it: implementations that returned
+  `Err(NotFound)` for a missing row must return `Ok(false)`.
+
+- **`RedisWebauthnStore::connect` is `async`.** It stays eager, so an
+  unreachable Redis still fails at boot. A sync lazy initialiser
+  (`std::sync::OnceLock`) becomes `tokio::sync::OnceCell`; a sync builder that
+  constructs the store at boot becomes `async fn` (aqua-node's
+  `build_explorer_router` did).
+
+- **The `redis` feature now enables `redis/tokio-comp` and
+  `redis/connection-manager`.** If you also depend on the `redis` crate
+  directly, both unify into your build.
