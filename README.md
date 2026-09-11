@@ -27,15 +27,28 @@ Author is not courier: a signed aqua-tree proves who authored it, not who is del
 
 ## Identity: DID namespaces
 
-Three first-class namespaces, all on by default:
+Three first-class namespaces, all on by default, plus one gated post-quantum namespace:
 
 | Namespace | DID shape | Identifier | Signature |
 |---|---|---|---|
 | `eip155` | `did:pkh:eip155:<chain_id>:0x<eip55_address>` | EVM 20-byte address (EIP-55) | EIP-191 personal_sign over secp256k1 |
 | `ed25519` | `did:key:z6Mk<multibase>` **or** `did:pkh:ed25519:0x<32-byte pubkey hex>` | Ed25519 public key | Ed25519 over canonical message bytes |
 | `p256` | `did:key:zDn<multibase>` **or** `did:pkh:p256:0x<33-byte compressed pubkey hex>` | P-256 public key | P-256 ECDSA over canonical message bytes |
+| `aqua` (gated) | `did:aqua:z<46 base58btc chars>` | SHA3-256 commitment to an ML-DSA-87 public key | ML-DSA-87 (FIPS 204) over canonical message bytes |
 
 The two non-EVM namespaces are Aqua extensions to CAIP-122; `did:peer` (variants 0 and 2) is additionally supported for DID resolution. See [`SPEC.md`](SPEC.md) for the authoritative wire contract.
+
+**`did:aqua` is the odd one out, and worth understanding before you use it.**
+The other namespaces let the verifier get the public key from something it
+already holds: three of them embed the key in the DID, and `eip155` recovers
+it from the signature because secp256k1 ECDSA is recoverable. ML-DSA has no
+recovery, and `did:aqua` stores only a hash, so the key cannot come from
+either place and the client sends it alongside the signature. A `did:aqua`
+login is therefore about 14.3 KB rather than 200 bytes, and a server MUST bind
+the supplied key back to the DID before trusting it. The reason to hash rather
+than embed is that an ML-DSA-87 key is 2592 bytes, which would make a
+~3552-character DID; content-addressed it is 56 characters. See
+[`SPEC.md`](SPEC.md) sections 5.4 and 6.3.
 
 **Two spellings, two principals (#182, ruled 2026-08-06).** An ed25519/P-256 key has two accepted login DIDs: its `did:key` form and its `did:pkh:{ed25519,p256}` form. Both are valid, and they are **distinct principals**: the storage layer (`canonical_trust_key`) keys them separately, so each spelling has its own grant bucket. Logging in under one spelling then the other returns a **different set of resources**; this is intended, not a bug. If a user reports "my files disappeared" after switching login method, that is this behaviour (they authenticated as a different principal), not a regression; do **not** re-open #182.
 
@@ -49,8 +62,19 @@ Only the crypto/DID primitives are unconditionally compiled: the `CipherSuite` a
 | `client` | off | Implies `http`. `client::authenticate()`: the full challenge-response flow over `reqwest`, with pre-sign challenge binding checks. |
 | `http-sig` | off | **Experimental.** RFC 9421 request signatures: `sign_request` / `verify_request`, replay protection, two profiles (Aqua-internal and `web-bot-auth` interop). Pulls in `sfv`, `base64`, `rand`, `dashmap`. |
 | `webauthn` | off | Standalone P-256 WebAuthn assertion verifier. Pulls in `sha2`, `base64`, `serde_json`. Independent of `http`. |
+| `did-aqua` | off | The `did:aqua` post-quantum namespace: ML-DSA-87 (FIPS 204) login over a content-addressed identity (PCA-0017). Pulls in `ml-dsa`. The only gated namespace; see the note below. |
 
-Per-namespace gating is deliberately not offered: a service that accepts Aqua CAIP-122 accepts all three namespaces, full stop.
+Per-namespace gating is deliberately not offered for the three classical
+namespaces: a service that accepts Aqua CAIP-122 accepts `eip155`, `ed25519`
+and `p256`, full stop. Those are unconditional and MUST NOT be gated.
+
+`did:aqua` is the one exception, and the exception is about cost rather than
+preference. It is the only namespace that pulls an entire additional signature
+stack (`ml-dsa`) into the build, and a deployment with no post-quantum
+identities should not have to compile or audit it. So it sits behind
+`did-aqua`, off by default. A service that enables the feature accepts
+`did:aqua`; one that does not, does not, and says so with a clean
+`UnsupportedMethod` rather than a confusing failure.
 
 ## Quick start
 
