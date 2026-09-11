@@ -54,7 +54,7 @@ than embed is that an ML-DSA-87 key is 2592 bytes, which would make a
 
 ## Feature flags
 
-Only the crypto/DID primitives are unconditionally compiled: the `CipherSuite` and `DIDMethod` registries, the verifier modules, DID parsing, `verify_caip122()`, `Principal`/`authenticate()`, and the `Signer` trait. Everything else is opt-in:
+Only the crypto/DID primitives are unconditionally compiled: the `CipherSuite` and `DIDMethod` registries, the verifier modules, DID parsing, `validate_did_well_formed()`, `verify_caip122()`, `Principal`/`authenticate()`, and the `Signer` trait. Everything else is opt-in:
 
 | Flag | Default | What it gates |
 |---|---|---|

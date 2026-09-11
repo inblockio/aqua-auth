@@ -6,6 +6,40 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+### Fixed
+
+- **SPEC section 7 rule 5 ("DID well-formed") now has an enforcement layer of
+  its own.** It had none: the only thing that ever rejected a malformed
+  identifier was the signature-verification path incidentally failing to
+  parse a key out of it, so rule 5 held only to the extent that verification's
+  own DID parsing happened to catch it. Measured 2026-09-11 against the
+  conformance suite's seven malformed shapes (`spec_7_5_did_well_formed`),
+  five reached `ChallengeStore::create` and were handed a real nonce for the
+  full TTL: the four `did:pkh:ed25519` shapes (31-byte, 33-byte, missing
+  `0x`, non-hex) and the 32-byte `did:pkh:p256` shape. The two refused early
+  were refused by accident, not by design: `PkhMethod::address_for_message`
+  special-cases eip155 to `checksummed_address`, which length-checks, and
+  `build_message` calls `method_label`, which for `did:key` decodes the
+  multibase body.
+
+  The fix is a new public function, `validate_did_well_formed()`
+  (`src/did_format.rs`). It is called at three independent points so that no
+  single future change can remove rule 5 again: `ChallengeStore::create`,
+  `authenticate_with_public_key`, and `Principal::from_trusted_did`. The
+  per-method verifiers underneath all three are unchanged: this is defence in
+  depth, not a relocation, and a relocated check would have left exactly the
+  single point of failure it was meant to remove.
+
+  **The one observable behaviour change:** `ChallengeStore::create` and
+  `Principal::from_trusted_did` now refuse DIDs they used to accept. None of
+  those DIDs could ever have produced a verifying signature, so no legitimate
+  caller is affected, which is why this lands in 0.8.0 rather than needing a
+  patch release of its own. The refusal set is also a strict subset of what
+  verification already refused, by construction rather than by review: each
+  arm of `validate_did_well_formed()` calls the same parser the corresponding
+  verifier calls first, so the new check cannot reject anything the crate
+  used to accept.
+
 ## [0.8.0] - 2026-09-11
 
 What a consumer had to write for itself, and a way to tell whether a server is
