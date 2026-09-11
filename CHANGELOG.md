@@ -6,6 +6,47 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+### Added
+
+- **`did::ed25519_did_key_from_pubkey` / `did::p256_did_key_from_pubkey`**: the
+  encode direction for `did:key`, which the crate had never exported. Only the
+  decoders existed, so every producer open-coded multicodec plus base58btc:
+  six times inside this crate, plus the testkit, aqua-agents, the SDK and siwx.
+  A DID string is an identity, and two producers that disagree mint two
+  identities for one key. `webauthn_ceremony::did_key_from_p256_compressed` now
+  delegates here and its duplicate multicodec constant is gone; its output is
+  unchanged and covered by a test.
+
+  Named for the `did:key` spelling rather than the curve because the `did:key`
+  and `did:pkh` forms of one key are distinct principals (#182), and a
+  curve-only name would let a caller mint the wrong one silently.
+
+- **`LocalKeySigner`** behind the new `local-key` feature: a `Signer` over an
+  Ed25519 or P-256 PKCS#8 PEM held in this process, deriving its own `did:key`
+  through the encoders above so the key and the DID cannot drift apart. The
+  crate shipped the `Signer` trait and `FnSigner` but nothing that loads a key,
+  so every consumer wrote this. Opt-in because raw key material in process
+  memory is what a production signer should avoid. `Debug` is implemented by
+  hand and redacts the key.
+
+- **`client::AuthSession`** behind `client`: an authenticated session that
+  re-runs the CAIP-122 login once on a `401` and retries the request. `SPEC.md`
+  section 6.5 makes sessions server-memory-resident and explicitly not durable
+  across a restart, so a long-lived client's token can die at any time;
+  `authenticate()` alone left every consumer writing the same retry. The token
+  is handed to a caller-supplied request builder rather than attached here,
+  because the Aqua node dialects accept it as a Bearer header, a `nonce` header
+  or an `aqua_session` cookie. Covered by two loopback e2e tests, including one
+  that counts signer invocations to prove the recovery re-runs the ceremony
+  rather than replaying a cached signature.
+
+### Changed
+
+- `CONSUMERS.md` re-verified against 0.7.0: siwx-oidc is now tag-pinned
+  (`v0.7.0`, 2026-09-11) rather than unpinned, and `aqua-agents` is recorded as
+  a transitive consumer that wants `client` but is blocked on the URL-spelling
+  rule.
+
 ## [0.7.0] - 2026-08-31
 
 Async credential store. 0.6.0 removed the Redis *session* backend, which was

@@ -28,11 +28,6 @@ pub use webauthn_rs::prelude::{
     RegisterPublicKeyCredential as WebauthnAttestation,
 };
 
-/// P-256 multicodec prefix — identical to the SDK's `P256_CODEC` and this
-/// crate's `key::P256_PREFIX`, so a `did:key` derived here matches every other
-/// producer byte-for-byte.
-const P256_MULTICODEC: [u8; 2] = [0x80, 0x24];
-
 #[derive(Debug, thiserror::Error)]
 pub enum CeremonyError {
     #[error("webauthn error: {0}")]
@@ -96,9 +91,7 @@ pub fn user_handle_for(did: &str) -> [u8; 32] {
 /// `did:key:zDn…` from a compressed (SEC1, 33-byte) P-256 public key. SDK-free —
 /// same multicodec + base58btc encoding every other producer uses.
 pub fn did_key_from_p256_compressed(pubkey: &[u8; 33]) -> String {
-    let mut bytes = P256_MULTICODEC.to_vec();
-    bytes.extend_from_slice(pubkey);
-    format!("did:key:z{}", bs58::encode(&bytes).into_string())
+    crate::did::p256_did_key_from_pubkey(pubkey)
 }
 
 /// Extract the compressed (33-byte SEC1) P-256 public key from a `Passkey`'s COSE

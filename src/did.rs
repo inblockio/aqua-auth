@@ -286,3 +286,96 @@ mod tests {
         assert_eq!(addr, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
     }
 }
+
+// ── did:key encoding ────────────────────────────────────────────────────────
+
+/// Build a `did:key:z6Mk...` DID from a raw 32-byte Ed25519 public key.
+///
+/// The inverse of [`crate::key::ed25519_pubkey_from_did_key`]: `did:key:z` plus
+/// base58btc over the Ed25519 multicodec prefix followed by the raw key bytes.
+///
+/// The name says `did_key` because the `did:key` and `did:pkh:ed25519` forms of
+/// one key are **two distinct principals** (ruling #182), each with its own
+/// grant bucket. A function named only for the curve would let a caller mint
+/// the wrong one of the two without noticing.
+///
+/// Before this existed the encoding was open-coded at every producer, inside
+/// this crate as well as outside it, and a DID string is an identity: two
+/// producers that disagree mint two identities for one key.
+pub fn ed25519_did_key_from_pubkey(pubkey: &[u8; 32]) -> String {
+    encode_did_key(crate::key::ED25519_PREFIX, pubkey)
+}
+
+/// Build a `did:key:zDn...` DID from a compressed (SEC1, 33-byte) P-256 public key.
+///
+/// See [`ed25519_did_key_from_pubkey`] for why the spelling is in the name and
+/// why the encoding lives in one place.
+pub fn p256_did_key_from_pubkey(pubkey: &[u8; 33]) -> String {
+    encode_did_key(crate::key::P256_PREFIX, pubkey)
+}
+
+/// `did:key:z` + base58btc(multicodec prefix || raw key bytes).
+///
+/// Private because a caller choosing its own prefix bytes is exactly the
+/// divergence this module exists to prevent; add a typed wrapper above instead.
+fn encode_did_key(prefix: &[u8], pubkey: &[u8]) -> String {
+    let mut bytes = Vec::with_capacity(prefix.len() + pubkey.len());
+    bytes.extend_from_slice(prefix);
+    bytes.extend_from_slice(pubkey);
+    format!("did:key:z{}", bs58::encode(&bytes).into_string())
+}
+
+#[cfg(test)]
+mod encode_tests {
+    use super::*;
+
+    /// Encode then decode returns the key unchanged. This is the property that
+    /// makes the pair safe to use as an identity: a producer and a verifier
+    /// that both route through this module cannot disagree.
+    #[test]
+    fn ed25519_encode_round_trips_through_the_did_key_decoder() {
+        let ed = [7u8; 32];
+        let did = ed25519_did_key_from_pubkey(&ed);
+        assert!(did.starts_with("did:key:z6Mk"), "unexpected prefix: {did}");
+        assert_eq!(crate::key::ed25519_pubkey_from_did_key(&did).unwrap(), ed);
+    }
+
+    /// P-256 has no public `did:key` decoder, so the round trip goes through
+    /// the method registry, which is what actually consumes these DIDs.
+    #[test]
+    fn p256_encode_produces_a_did_the_registry_accepts() {
+        // A valid compressed SEC1 point starts with 0x02 or 0x03.
+        let mut p = [9u8; 33];
+        p[0] = 0x02;
+        let did = p256_did_key_from_pubkey(&p);
+        assert!(did.starts_with("did:key:zDn"), "unexpected prefix: {did}");
+        assert!(
+            crate::find_did_method(&did).is_some(),
+            "the registry must recognise a did:key we mint"
+        );
+    }
+
+    /// The two spellings of one key are different principals (#182), so the
+    /// `did:key` encoder must not accidentally produce the `did:pkh` form.
+    #[test]
+    fn the_did_key_form_is_not_the_did_pkh_form() {
+        let ed = [7u8; 32];
+        assert_ne!(
+            ed25519_did_key_from_pubkey(&ed),
+            format!("did:pkh:ed25519:0x{}", hex::encode(ed))
+        );
+    }
+
+    /// The ceremony helper predates this module and is part of the crate's
+    /// public API, so it must keep producing byte-identical output.
+    #[cfg(feature = "ceremony")]
+    #[test]
+    fn ceremony_helper_agrees_with_the_shared_encoder() {
+        let mut p = [3u8; 33];
+        p[0] = 0x03;
+        assert_eq!(
+            crate::webauthn_ceremony::did_key_from_p256_compressed(&p),
+            p256_did_key_from_pubkey(&p)
+        );
+    }
+}

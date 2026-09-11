@@ -405,3 +405,112 @@ async fn an_envelope_naming_another_did_dies_before_signing() {
 
     server.abort();
 }
+
+/// **HB3:** an `AuthSession` whose token the server has forgotten re-logs in
+/// and completes the request, and the caller never sees the `401`.
+///
+/// This is the one property `authenticate()` alone cannot have. `SPEC.md`
+/// section 6.5 makes sessions server-memory-resident and explicitly not
+/// durable across a restart, so a long-lived client's token can stop working
+/// at any moment through no fault of its own. Revoking the session out from
+/// under the client is the deterministic stand-in for that restart.
+///
+/// The signer's call count is the instrument. Two calls, not one, proves the
+/// recovery actually re-ran the CAIP-122 ceremony rather than replaying a
+/// cached signature, and the returned body proves the retry carried the fresh
+/// token rather than the dead one.
+#[tokio::test]
+async fn hb3_a_forgotten_session_is_re_established_transparently() {
+    let key: Arc<dyn Signer> = Arc::new(signers::Ed25519Local::generate(signers::Spelling::DidKey));
+    let client = CountingSigner::wrapping(key);
+    let peer_key: Arc<dyn Signer> =
+        Arc::new(signers::Ed25519Local::generate(signers::Spelling::DidKey));
+    let (peer, base_url, server) =
+        AquaPeer::bind_loopback("node", CHALLENGE_TTL_SECS, peer_key).await;
+
+    let mut session = aqua_auth::client::AuthSession::login(
+        reqwest::Client::new(),
+        &base_url,
+        &client,
+    )
+    .await
+    .expect("the initial login must succeed");
+
+    let logins_after_first = client.calls();
+    assert_eq!(logins_after_first, 1, "login signs exactly once");
+
+    // The server forgets this session, exactly as a restart would.
+    assert!(
+        peer.sessions.revoke(session.token()),
+        "the token must have been live before we revoked it"
+    );
+    let dead_token = session.token().to_string();
+
+    let resp = session
+        .send(&client, |c, base, token| {
+            c.get(format!("{base}/whoami"))
+                .header("Authorization", format!("Bearer {token}"))
+        })
+        .await
+        .expect("send must recover from the 401");
+
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::OK,
+        "the caller must never see the 401"
+    );
+    let body: serde_json::Value = resp.json().await.expect("whoami returns JSON");
+    assert_eq!(body["did"], client.signer_did());
+
+    assert_eq!(
+        client.calls(),
+        2,
+        "recovery must re-run the ceremony, not replay a cached signature"
+    );
+    assert_ne!(
+        session.token(),
+        dead_token,
+        "the session must be holding the new token afterwards"
+    );
+
+    server.abort();
+}
+
+/// A `401` that survives a successful re-login is an authorization failure,
+/// not an expiry, so it is returned rather than retried forever. One retry,
+/// not a loop.
+#[tokio::test]
+async fn a_persistent_401_is_returned_after_exactly_one_retry() {
+    let key: Arc<dyn Signer> = Arc::new(signers::Ed25519Local::generate(signers::Spelling::DidKey));
+    let client = CountingSigner::wrapping(key);
+    let peer_key: Arc<dyn Signer> =
+        Arc::new(signers::Ed25519Local::generate(signers::Spelling::DidKey));
+    let (_peer, base_url, server) =
+        AquaPeer::bind_loopback("node", CHALLENGE_TTL_SECS, peer_key).await;
+
+    let mut session = aqua_auth::client::AuthSession::login(
+        reqwest::Client::new(),
+        &base_url,
+        &client,
+    )
+    .await
+    .expect("the initial login must succeed");
+
+    // A token this server will never accept, presented on every attempt.
+    let resp = session
+        .send(&client, |c, base, _token| {
+            c.get(format!("{base}/whoami"))
+                .header("Authorization", "Bearer 00deadbeef")
+        })
+        .await
+        .expect("the transport succeeded; the status is the result");
+
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        client.calls(),
+        2,
+        "exactly one re-login attempt, then give up"
+    );
+
+    server.abort();
+}

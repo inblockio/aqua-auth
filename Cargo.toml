@@ -12,6 +12,11 @@ default = []
 http = ["dep:rand", "dep:serde_json", "dep:chrono", "dep:dashmap", "dep:tokio", "dep:tracing"]
 client = ["http", "dep:reqwest", "dep:url"]
 webauthn = ["dep:sha2", "dep:base64", "dep:serde_json"]
+# `LocalKeySigner`: a Signer over a PKCS#8 private key held in this process.
+# Opt-in because raw key material in process memory is what a production
+# signer should avoid; a KMS/HSM/wallet backend implements `Signer` directly.
+# Pulls only PEM decoding into the already-present dalek and p256 crates.
+local-key = ["ed25519-dalek/pkcs8", "ed25519-dalek/pem", "p256/pkcs8", "p256/pem"]
 # RFC 9421 per-request HTTP message signatures. EXPERIMENTAL: tracks an IETF
 # draft (see `src/http_sig/mod.rs`), so it is exempt from the crate's semver
 # stability promise until the draft settles.

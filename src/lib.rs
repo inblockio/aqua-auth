@@ -36,9 +36,9 @@ pub mod signer;
 pub use cipher_suite::{all_cipher_suites, find_cipher_suite, CipherSuite};
 pub use crypto_error::CryptoError;
 pub use did::{
-    address_from_did, address_from_verifying_key, checksummed_address, eip55_checksum,
-    identifier_from_did, identifier_from_message, parse_did_namespace, pubkey_from_ed25519_did,
-    pubkey_from_p256_did,
+    address_from_did, address_from_verifying_key, checksummed_address, ed25519_did_key_from_pubkey,
+    eip55_checksum, identifier_from_did, identifier_from_message, p256_did_key_from_pubkey,
+    parse_did_namespace, pubkey_from_ed25519_did, pubkey_from_p256_did,
 };
 pub use did_method::{all_did_methods, find_did_method, DIDMethod};
 pub use key::{ed25519_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite};
@@ -46,6 +46,12 @@ pub use peer::PeerMethod;
 pub use pkh::{Eip155Suite, PkhMethod};
 pub use principal::{authenticate, Principal};
 pub use signer::{FnSigner, SignError, Signer};
+
+// --- Behind `local-key` feature (in-process PKCS#8 key custody) ---
+#[cfg(feature = "local-key")]
+pub mod local_key;
+#[cfg(feature = "local-key")]
+pub use local_key::{LocalKeyError, LocalKeySigner};
 
 // --- Behind `http` feature (session/auth layer) ---
 #[cfg(feature = "http")]

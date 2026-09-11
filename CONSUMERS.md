@@ -6,7 +6,8 @@ its consumers, which is how `main` and `feat/backend-unification` drifted into
 two heads for six weeks without anyone noticing: the head with all the tests had
 no users, and the head with all the users had no tests.
 
-Last verified: **2026-08-30**, against `aqua-auth` 0.6.0.
+Last verified: **2026-09-11**, against `aqua-auth` 0.7.0 (`v0.7.0` / `CheckPoint.20260911`,
+both tags on commit `97f69c3`).
 
 ## The rule: all consumers move together
 
@@ -46,9 +47,10 @@ So:
 |---|---|---|---|---|
 | aqua-node | `tag = "CheckPoint.20260817"` | `ssh://` | `http`, `redis`, `webauthn`, `ceremony` | Primary server-side consumer. Locked at `7d227b5` (0.4.0). |
 | aquafier-rs | `tag = "CheckPoint.20260817"` | `ssh://` | `http`, `webauthn`, `ceremony`, `redis` | Locked at `7d227b5` (0.4.0). `redis` added 2026-08-30, see below. |
-| aqua-state-viewer | `tag = "CheckPoint.20260521"` | `ssh://` | `client` | Locked at `056cb34` (0.2.0). Three tags behind. |
-| siwx-oidc (root) | **unpinned** | `https://` | `webauthn` | Locked at `056cb34` (0.2.0) by `Cargo.lock` only. |
-| siwx-oidc-auth | **unpinned** | `https://` | (default) | Same workspace as above, so it also sees `webauthn` by feature union. |
+| aqua-state-viewer | `tag = "CheckPoint.20260521"` | `ssh://` | `client` | Locked at `056cb34` (0.2.0). Four tags behind. |
+| siwx-oidc (root) | `tag = "v0.7.0"` | `https://` | `webauthn`, `ceremony`, `redis` | Pinned 2026-09-11 (`5762aa0`), was unpinned. |
+| siwx-oidc-auth | `tag = "v0.7.0"` | `https://` | (default) | Same workspace as above, so it also sees the union. |
+| aqua-agents | **transitive only**, via `siwx-oidc-auth` | `https://` (inherited) | (default; no `client`) | Not a direct consumer, but this crate is in its lock graph and it wants `client`. See below. |
 | aqua-timestamps | `path = "../aqua-auth"` | n/a | `http`, `client` | **Orphaned.** See below. |
 
 ### aqua-node
@@ -120,6 +122,22 @@ onto `aqua-auth`'s is **not** a refactor, and was deliberately not attempted:
 
 Full analysis, including what a real consolidation would need:
 `docs/superpowers/specs/2026-08-30-siwx-oidc-ceremony-consolidation.md`.
+
+### aqua-agents: a transitive consumer that wants to become a direct one
+
+`aqua-agents` never names this crate, but it has it: its `aqua-call-agent`
+takes `aqua-matrix-agent`, which takes `siwx-oidc-auth`, which git-deps
+`aqua-auth`. So the crate compiles into the Scribe transcript agent today with
+default features and no `client`.
+
+Meanwhile `aqua-agents/crates/aqua-node-client` hand-rolls the CAIP-122 login
+this crate has shipped behind `client` since 0.2.0, including its own `did:key`
+encoder and its own PKCS#8 loader. It cannot simply switch the feature on until
+the URL spellings converge (rule 2 above): it inherits the `https://` source
+from siwx-oidc-auth, while aqua-node and aquafier-rs use `ssh://`, so adding a
+second declaration here would build this crate twice with features unmerged.
+
+Recorded so the next tag batch includes it. Nothing to do in this repo.
 
 ### aqua-timestamps: orphaned, needs a decision
 
