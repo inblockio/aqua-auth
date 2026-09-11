@@ -235,7 +235,6 @@ async fn challenge_handler(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     Ok(Json(ChallengeEnvelope {
-        did: challenge.did,
         nonce: challenge.nonce,
         message: challenge.message,
         expires_at: challenge.expires_at,

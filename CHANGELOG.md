@@ -8,26 +8,37 @@ semver, staying below 1.0 while the crate is in active development.
 
 ### Changed
 
-- **`wire::ChallengeEnvelope` now carries `did`**, matching `SPEC.md` Section
-  6.2 field for field. It did not before: the spec required the field, every
-  Aqua server emitted it, and the type declared as "the canonical wire shape"
-  omitted it. Interop held only because serde ignores unknown fields, so the
-  crate contradicted its own specification in a way nothing could fail on.
-  Ruled 2026-09-11: the type moves to the spec.
+- **`wire::ChallengeEnvelope` does not carry `did`**, and tolerates servers
+  that send one. Earlier on 2026-09-11 the field was added to match `SPEC.md`
+  Section 6.2; later the same day it was removed again and Section 6.2 amended
+  to match, on the rule that a part you do not need is a part you should not
+  have.
 
-  Breaking for anyone deserializing a three-field envelope. One deployed
-  server is known to emit that shape, `timestamp.inblock.io`, whose repo is
-  already recorded in `CONSUMERS.md` as orphaned and whose client call site is
-  already statically broken against any post-0.5.0 release, so nothing
-  current-generation can reach it. `wire::a_did_less_envelope_is_refused`
-  pins the new behaviour and records why rather than leaving it to a parse
-  error. Section 6.2's open question ("a future version may remove `did`") is
-  resolved in the same pass: the field stays and the client-side identifier
-  check is the defence.
+  Nothing consumed it. The client's binding check compares the identifier
+  inside `message` against the **signer's own** DID, never an envelope field,
+  so the one place the field could have mattered never read it. `did:aqua`
+  carries its public key on `SessionRequest`. A field no code reads is a
+  second place to state an identity and therefore a second place for it to
+  disagree with the first.
+
+  **This is not a breaking change and requires no server change.** There is no
+  `deny_unknown_fields`, so servers keep emitting `did` and serde keeps
+  discarding it. It also restores compatibility with `timestamp.inblock.io`,
+  which has never sent the field; requiring it would have made that endpoint
+  unparseable for every client built on this crate.
+
+  Section 6.2 now also specifies the **URI origin binding check**, which was
+  implemented and tested in `client::signed_session_request` but appeared in
+  no specification text. It is what refuses a challenge relayed from another
+  Aqua service, and with `did` gone the two client-side checks and their
+  ordering are the entire mitigation, so they belong in the spec rather than
+  only in the code.
 
 ### Deprecated
 
-- **`verify_caip122` in favour of `authenticate`.** Ruled 2026-09-11: a `bool`
+- **`verify_caip122` in favour of `authenticate`.** This deprecation, together
+  with the new `local-key` and `AuthSession` surfaces, is what carries the
+  0.8.0 bump; the wire format is unchanged in both directions. Ruled 2026-09-11: a `bool`
   is the wrong return type for proof of possession. Nothing in the type system
   stops a caller verifying one DID and creating a session for another, and
   `Ok(false)` is as easy to drop as any other boolean, whereas a `Principal`

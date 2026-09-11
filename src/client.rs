@@ -602,7 +602,6 @@ mod tests {
         })
         .expect("message builds for a supported DID");
         ChallengeEnvelope {
-            did: did.to_string(),
             nonce: "0xdeadbeef".to_string(),
             message,
             expires_at: 9999999999,
@@ -693,7 +692,6 @@ mod tests {
         // The identifier line is irrelevant here: the DID never resolves to a
         // method, so the check cannot even compute what to expect.
         let envelope = ChallengeEnvelope {
-            did: "did:pkh:solana:0xabc".to_string(),
             nonce: "0xdeadbeef".to_string(),
             message: message_with_uri(BASE_URL),
             expires_at: 9999999999,

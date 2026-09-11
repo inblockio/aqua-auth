@@ -337,7 +337,6 @@ reference client in `src/client.rs`).
 
 ```json
 {
-  "did": "<string>",
   "nonce": "<string>",
   "message": "<string>",
   "expires_at": <u64>
@@ -346,30 +345,54 @@ reference client in `src/client.rs`).
 
 | Field | Type | Description |
 |---|---|---|
-| `did` | string | The DID that was passed in the query parameter |
 | `nonce` | string | The random nonce (`0x` + 64 lowercase hex chars) |
 | `message` | string | The full canonical CAIP-122 message to sign |
 | `expires_at` | u64 | Unix timestamp (seconds) when the challenge expires (5-minute TTL by default) |
 
-**Implementation note:** `did` is redundant with the message body, which
-already encodes the identifier, and that redundancy is a mismatch surface: a
-server can return an envelope naming one DID wrapped around a message naming
-another.
+**`did` was removed from this table on 2026-09-11.** Earlier revisions listed
+it, and every Aqua server still emits it. Servers MAY continue to; clients MUST
+ignore it. Parsers MUST NOT reject an envelope for carrying unknown fields, and
+MUST NOT require `did` to be present: one deployed server has never sent it.
 
-Resolved 2026-09-11: the field **stays**, and the defence is the client check
-below rather than removal. Every Aqua server emits it, and until this date
-`wire::ChallengeEnvelope` omitted it, so the reference type and this section
-disagreed and interop held only because serde ignores unknown fields. The type
-now matches this table field for field.
+It was removed because nothing consumes it. The identifier is already inside
+`message`, which is the part that gets signed, and the client's binding check
+compares that identifier against the **signer's own DID**, never against an
+envelope field. `did:aqua` carries its public key on the session request
+(Section 6.3), not here. So the field could only ever restate the identity
+redundantly or contradict it, and a second place to state an identity is a
+second place for it to be wrong.
 
-Clients MUST verify that the identifier in `message` matches the DID they
-requested, before signing. The reference client does this in
-`client::signed_session_request`, alongside a second check this document does
-not yet specify: the `URI:` line's origin must match the origin the client
-dialled, which is what refuses a challenge relayed from another Aqua service.
-Both run before the signer is invoked. A client that signs first and validates
-afterwards has already produced a credential for whoever minted the challenge,
-so the ordering is the defence and not the checks alone.
+#### Client binding checks
+
+The mitigation lives entirely on the client, and its **ordering** is the
+defence, not the checks alone. A client that signs first and validates
+afterwards has already produced a credential for whoever minted the challenge.
+Both checks below MUST therefore complete before the signer is invoked, and a
+failure of either MUST abort without invoking it.
+
+1. **Identifier binding.** The identifier line in `message` MUST equal the
+   identifier derived from the DID the client is authenticating as. This
+   refuses a challenge minted for a different subject.
+
+2. **URI origin binding.** The `URI:` line in `message` MUST have the same
+   origin as the endpoint the client dialled, comparing scheme, host and port
+   with the scheme's default port made explicit, so `https://x` and
+   `https://x:443` are equal. Paths are ignored. The `domain` line is NOT
+   checked: it is a free-form label and deployed servers use non-hostnames
+   such as `aqua-node`.
+
+   This is what refuses a **relay**. A compromised or hostile endpoint that
+   forwards a challenge minted by a different Aqua service presents a message
+   whose `URI:` origin is that other service's, so the client declines to sign
+   and the attacker collects nothing. Without this check, a signature obtained
+   here is a valid credential *there*.
+
+The reference implementation is `client::signed_session_request`, and
+`AuthClientError::MessageIdentifierMismatch` and
+`AuthClientError::UriOriginMismatch` are the two refusals. Both are covered by
+loopback tests that count signer invocations, because a call count of zero is
+the difference between "the login failed" and "the key was never used", and
+only the second is a defence.
 
 ### 6.3 Session Request
 
