@@ -17,6 +17,14 @@ webauthn = ["dep:sha2", "dep:base64", "dep:serde_json"]
 # signer should avoid; a KMS/HSM/wallet backend implements `Signer` directly.
 # Pulls only PEM decoding into the already-present dalek and p256 crates.
 local-key = ["ed25519-dalek/pkcs8", "ed25519-dalek/pem", "p256/pkcs8", "p256/pem"]
+# `did:aqua`: ML-DSA-87 post-quantum login (PCA-0017). The ONLY gated
+# namespace, and a deliberate exception to the rule stated in the README that
+# a service accepting Aqua CAIP-122 accepts every namespace. The exception is
+# justified by cost, not by preference: this is the only namespace that pulls
+# a whole additional signature stack (`ml-dsa`), and a deployment with no
+# post-quantum identities should not have to build or audit it. The three
+# classical namespaces stay unconditional and MUST NOT be gated.
+did-aqua = ["dep:ml-dsa"]
 # RFC 9421 per-request HTTP message signatures. EXPERIMENTAL: tracks an IETF
 # draft (see `src/http_sig/mod.rs`), so it is exempt from the crate's semver
 # stability promise until the draft settles.
@@ -55,6 +63,14 @@ tokio = { version = "1", features = ["time", "rt"], optional = true }
 # consumers already on a `tracing_subscriber` (aqua-node) capture these
 # events automatically with zero bridging.
 tracing = { version = "0.1", optional = true }
+
+# Behind `did-aqua` feature. Version pinned to EXACTLY what aqua-rs-sdk uses
+# (`aqua-rs-sdk/Cargo.toml`, ml-dsa 0.1.1). This crate reimplements the
+# did:aqua codec rather than depending on the SDK, so the one thing that must
+# not diverge is what actually verifies: two different ml-dsa versions could
+# disagree on a signature that the content layer accepted. Bump this only in
+# lockstep with the SDK.
+ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"], optional = true }
 
 # Behind `webauthn` feature
 sha2 = { version = "0.10", optional = true }

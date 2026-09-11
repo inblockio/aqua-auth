@@ -53,6 +53,15 @@ pub mod local_key;
 #[cfg(feature = "local-key")]
 pub use local_key::{LocalKeyError, LocalKeySigner};
 
+// --- Behind `did-aqua` feature (ML-DSA-87 post-quantum namespace) ---
+#[cfg(feature = "did-aqua")]
+pub mod aqua;
+#[cfg(feature = "did-aqua")]
+pub use aqua::{
+    aqua_did_binds_pubkey, aqua_did_from_pubkey, multihash_from_aqua_did, AquaMethod,
+    ML_DSA_87_PUBLIC_KEY_BYTES, ML_DSA_87_SIGNATURE_BYTES,
+};
+
 // --- Behind `http` feature (session/auth layer) ---
 #[cfg(feature = "http")]
 pub mod auth_error;
