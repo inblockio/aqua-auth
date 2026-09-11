@@ -121,6 +121,8 @@ async fn login(peer: &AquaPeer, signer: &dyn Signer) -> SessionResponse {
             did: signer.signer_did().to_string(),
             nonce: envelope.nonce,
             signature: hex::encode(signature),
+            // Only did:aqua answers this; every classical signer sends None.
+            public_key: signer.public_key().map(hex::encode),
         },
     )
     .await;
@@ -178,6 +180,98 @@ async fn eip155_did_pkh_logs_in_end_to_end() {
     assert_login_matrix(signers::eip155()).await;
 }
 
+/// The sixth spelling: ML-DSA-87 under `did:aqua`, the one namespace whose
+/// login carries a public key.
+#[tokio::test]
+async fn did_aqua_logs_in_end_to_end() {
+    assert_login_matrix(signers::did_aqua()).await;
+}
+
+// ── adversarial: the did:aqua key binding ───────────────────────────────
+//
+// `did:aqua` is the only namespace where the verifier is handed a key rather
+// than deriving one, so it is the only one where "whose key is this?" is a
+// question the wire can lie about. These three cases are the answer: the key
+// is bound back to the DID's hash commitment before anything else, so a
+// caller cannot authenticate as an identity whose key it does not hold. That
+// binding is what makes the transport trustless and is why did:aqua needs no
+// registration authority.
+
+/// A perfectly valid ML-DSA-87 signature, presented under someone else's
+/// identity with the signer's own key attached. The signature verifies; the
+/// binding does not.
+#[tokio::test]
+async fn a_valid_signature_under_a_did_that_commits_to_another_key_is_refused() {
+    let attacker = signers::did_aqua();
+    let victim = signers::did_aqua();
+    let peer = peer(signers::ed25519_did_key());
+
+    // The challenge is minted for the victim, which is the identity being
+    // claimed, so the nonce/DID check passes and the binding check is what
+    // has to catch this.
+    let envelope = fetch_challenge(&peer, victim.signer_did()).await;
+    let signature = attacker.sign(&envelope.message).await.unwrap();
+
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: victim.signer_did().to_string(),
+            nonce: envelope.nonce,
+            signature: hex::encode(signature),
+            public_key: attacker.public_key().map(hex::encode),
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The same key, the same signature, but the DID's own key swapped for one
+/// that hashes elsewhere. Rejected for the binding, not the signature.
+#[tokio::test]
+async fn a_did_aqua_login_with_a_substituted_public_key_is_refused() {
+    let signer = signers::did_aqua();
+    let other = signers::did_aqua();
+    let peer = peer(signers::ed25519_did_key());
+
+    let envelope = fetch_challenge(&peer, signer.signer_did()).await;
+    let signature = signer.sign(&envelope.message).await.unwrap();
+
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: signer.signer_did().to_string(),
+            nonce: envelope.nonce,
+            signature: hex::encode(signature),
+            public_key: other.public_key().map(hex::encode),
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// No key at all. This must fail closed rather than fall through to a
+/// three-argument verify that cannot exist for this namespace.
+#[tokio::test]
+async fn a_did_aqua_login_with_no_public_key_is_refused() {
+    let signer = signers::did_aqua();
+    let peer = peer(signers::ed25519_did_key());
+
+    let envelope = fetch_challenge(&peer, signer.signer_did()).await;
+    let signature = signer.sign(&envelope.message).await.unwrap();
+
+    let response = post_session(
+        &peer,
+        &SessionRequest {
+            did: signer.signer_did().to_string(),
+            nonce: envelope.nonce,
+            signature: hex::encode(signature),
+            public_key: None,
+        },
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
 // ── adversarial: the server half refuses over the wire ──────────────────
 //
 // Status contract (the plan's route table): a nonce the store does not hold is
@@ -197,6 +291,7 @@ async fn a_nonce_this_server_never_issued_is_refused() {
             did: signer.signer_did().to_string(),
             nonce: format!("0x{}", "11".repeat(32)),
             signature: hex::encode([0u8; 64]),
+            public_key: None,
         },
     )
     .await;
@@ -214,6 +309,7 @@ async fn a_nonce_spent_by_a_successful_login_cannot_be_reused() {
         did: signer.signer_did().to_string(),
         nonce: envelope.nonce,
         signature,
+        public_key: None,
     };
 
     let first = post_session(&peer, &request).await;
@@ -246,6 +342,7 @@ async fn a_challenge_past_its_ttl_is_refused() {
             did: signer.signer_did().to_string(),
             nonce: envelope.nonce,
             signature,
+            public_key: None,
         },
     )
     .await;
@@ -270,6 +367,7 @@ async fn a_challenge_issued_to_one_did_cannot_be_claimed_by_another() {
             did: mallory.signer_did().to_string(),
             nonce: envelope.nonce,
             signature,
+            public_key: None,
         },
     )
     .await;
@@ -291,6 +389,7 @@ async fn a_tampered_signature_is_refused() {
             did: signer.signer_did().to_string(),
             nonce: envelope.nonce,
             signature: hex::encode(signature),
+            public_key: None,
         },
     )
     .await;
@@ -309,6 +408,7 @@ async fn a_signature_that_is_not_hex_is_refused() {
             did: signer.signer_did().to_string(),
             nonce: envelope.nonce,
             signature: "not-hex-at-all".to_string(),
+            public_key: None,
         },
     )
     .await;

@@ -55,6 +55,20 @@ form. The namespace/curve determines which signature algorithm applies.
 | `eip155` | `did:pkh:eip155:<chain_id>:0x<eip55_address>` | EIP-55 checksummed 20-byte address | EIP-191 `personal_sign` over canonical message string | CAIP-122 compliant |
 | `ed25519` | `did:key:z6Mk<multibase>` or `did:pkh:ed25519:0x<32-byte pubkey hex>` | multibase key (`did:key`) or raw 32-byte pubkey hex (`did:pkh`) | Ed25519 over raw message bytes (no prefix) | Aqua extension |
 | `p256` | `did:key:zDn<multibase>` or `did:pkh:p256:0x<33-byte compressed pubkey hex>` | multibase key (`did:key`) or compressed 33-byte pubkey hex (`did:pkh`) | P-256 ECDSA over raw message bytes (no prefix) | Aqua extension |
+| `aqua` | `did:aqua:z<46 base58btc chars>` | the `z...` multibase body | ML-DSA-87 (FIPS 204) over raw message bytes | Aqua extension, **feature-gated** (`did-aqua`), **key supplied separately** |
+
+> **`did:aqua` is the first namespace that hashes a non-recoverable key.** Every
+> other namespace lets the verifier obtain the public key from something it
+> already has: `did:key`, `did:pkh:{ed25519,p256}` and `did:peer` **embed** the
+> key in the DID and decode it out, while `did:pkh:eip155` **hashes** it and
+> recovers the key from the signature, which only works because secp256k1 ECDSA
+> is recoverable. ML-DSA is Fiat-Shamir with Aborts over module lattices: the
+> public key is an input to the verification relation, not an output of it, so
+> there is no recovery and none is possible. `did:aqua` therefore commits to a
+> key the verifier cannot reconstruct, and the key must travel separately
+> (section 6.3). The reason to hash at all is size: an ML-DSA-87 public key is
+> 2592 bytes, and embedding it `did:key`-style yields a ~3552-character DID
+> (PCA-0017 section 1.4), against 56 characters content-addressed.
 
 > **Two spellings, two principals (#182).** For ed25519/P-256, the `did:key` and
 > `did:pkh` forms of one key are **both accepted** and are **distinct principals**;
@@ -114,7 +128,7 @@ Chain ID: 1
 | Field | Value |
 |---|---|
 | `{domain}` | Caller-supplied domain string (e.g. `aqua-node`, `timestamp.inblock.io`) |
-| `{method_label}` | `Ethereum` for `eip155`, `Ed25519` for `ed25519`, `P-256` for `p256` |
+| `{method_label}` | `Ethereum` for `eip155`, `Ed25519` for `ed25519`, `P-256` for `p256`, `ML-DSA-87` for `aqua` |
 | `{identifier}` | See namespace table in section 3 |
 | `{uri}` | Caller-supplied URI (e.g. `http://127.0.0.1:3000`) |
 | `{nonce}` | `0x` followed by 64 lowercase hex characters (32 random bytes) |
@@ -190,6 +204,14 @@ Entry point: `verify_caip122(did, message, signature)` in `src/lib.rs`.
 Dispatches on the namespace parsed from the DID. Signature bytes passed to
 the verifier must be raw bytes (not hex-encoded).
 
+For `did:aqua` the entry point is instead
+`verify_caip122_with_public_key(did, message, signature, public_key)`, because
+three arguments are not enough to verify that namespace (section 5.4).
+`public_key` is ignored for every namespace below except 5.4, so a server that
+accepts post-quantum identities MAY route every login through the four-argument
+form. `verify_caip122` returns an error rather than a false for a `did:aqua`,
+so a deployment that forgets to plumb the key through fails diagnosably.
+
 ### 5.1 `eip155` (EIP-191 `personal_sign`)
 
 **Source:** `src/verify_eip191.rs`
@@ -253,6 +275,47 @@ the verifier must be raw bytes (not hex-encoded).
 **Signature length:** 64 bytes (fixed) or variable (DER). The verifier accepts
 both; signers should prefer fixed-size for interoperability.
 
+### 5.4 `aqua` (ML-DSA-87, FIPS 204)
+
+**Source:** `src/aqua/`. Gated behind the `did-aqua` feature.
+
+**Signer:**
+
+1. Sign the raw message bytes with ML-DSA-87 over the external interface with
+   the empty context string, `ML-DSA.Sign(sk, M, ctx = "")`.
+2. No prefix and no pre-hashing beyond what FIPS 204 applies internally.
+3. Send the 2592-byte `pkEncode` public key alongside (section 6.3). The
+   verifier cannot derive it.
+
+**Verifier:**
+
+1. **Bind first.** Recompute `did:aqua:` + `z` +
+   `base58btc(0x16 || 0x20 || SHA3-256(varint(0x1212) || pk))` from the
+   supplied key and compare byte-for-byte against the presented DID. A
+   mismatch is a failed authentication, not a malformed request. Verifying
+   before binding would prove possession of some key, which says nothing
+   about the identity being claimed.
+2. Length-check the key (2592) and the signature (4627).
+3. Run the canonical hint-encoding gate (FIPS 204 Algorithm 21
+   `HintBitUnpack`) over the trailing 83 hint bytes. Failures here are the
+   **malformed** class.
+4. Run `ML-DSA.Verify(pk, M, sig, ctx = "")`. A false here, including the `z`
+   infinity-norm bound, is the **invalid** class.
+
+The malformed/invalid split follows PCA-0017 section 2.5 and exists so that
+monolithic and split implementations classify identically. It matters because
+RustCrypto's `ml-dsa` folds the `z` bound into its decode step; implementations
+MUST NOT use decode alone as the malformed gate.
+
+**Signature length:** 4627 bytes, fixed. **Public key length:** 2592 bytes,
+fixed. **Identity length:** 56 characters, fixed.
+
+**Equality:** byte-for-byte and case-sensitive over the full DID string
+(PCA-0017 section 2.3). base58btc is case-sensitive by construction, so any
+case folding admits two distinct identities as one. No case folding, Unicode
+normalization, percent-decoding or whitespace trimming, anywhere a `did:aqua`
+is consumed.
+
 ---
 
 ## 6. Wire Format (JSON Envelope)
@@ -274,7 +337,6 @@ reference client in `src/client.rs`).
 
 ```json
 {
-  "did": "<string>",
   "nonce": "<string>",
   "message": "<string>",
   "expires_at": <u64>
@@ -283,17 +345,54 @@ reference client in `src/client.rs`).
 
 | Field | Type | Description |
 |---|---|---|
-| `did` | string | The DID that was passed in the query parameter |
 | `nonce` | string | The random nonce (`0x` + 64 lowercase hex chars) |
 | `message` | string | The full canonical CAIP-122 message to sign |
 | `expires_at` | u64 | Unix timestamp (seconds) when the challenge expires (5-minute TTL by default) |
 
-**Implementation note:** the `did` field is redundant with the message body
-(the message already encodes the identifier), and its presence creates a
-potential envelope/body mismatch attack surface where the DID in the response
-envelope could differ from the DID embedded in the message. A future version
-of this spec may remove `did` from the challenge response. Clients SHOULD
-verify that the identifier in `message` matches the DID they requested.
+**`did` was removed from this table on 2026-09-11.** Earlier revisions listed
+it, and every Aqua server still emits it. Servers MAY continue to; clients MUST
+ignore it. Parsers MUST NOT reject an envelope for carrying unknown fields, and
+MUST NOT require `did` to be present: one deployed server has never sent it.
+
+It was removed because nothing consumes it. The identifier is already inside
+`message`, which is the part that gets signed, and the client's binding check
+compares that identifier against the **signer's own DID**, never against an
+envelope field. `did:aqua` carries its public key on the session request
+(Section 6.3), not here. So the field could only ever restate the identity
+redundantly or contradict it, and a second place to state an identity is a
+second place for it to be wrong.
+
+#### Client binding checks
+
+The mitigation lives entirely on the client, and its **ordering** is the
+defence, not the checks alone. A client that signs first and validates
+afterwards has already produced a credential for whoever minted the challenge.
+Both checks below MUST therefore complete before the signer is invoked, and a
+failure of either MUST abort without invoking it.
+
+1. **Identifier binding.** The identifier line in `message` MUST equal the
+   identifier derived from the DID the client is authenticating as. This
+   refuses a challenge minted for a different subject.
+
+2. **URI origin binding.** The `URI:` line in `message` MUST have the same
+   origin as the endpoint the client dialled, comparing scheme, host and port
+   with the scheme's default port made explicit, so `https://x` and
+   `https://x:443` are equal. Paths are ignored. The `domain` line is NOT
+   checked: it is a free-form label and deployed servers use non-hostnames
+   such as `aqua-node`.
+
+   This is what refuses a **relay**. A compromised or hostile endpoint that
+   forwards a challenge minted by a different Aqua service presents a message
+   whose `URI:` origin is that other service's, so the client declines to sign
+   and the attacker collects nothing. Without this check, a signature obtained
+   here is a valid credential *there*.
+
+The reference implementation is `client::signed_session_request`, and
+`AuthClientError::MessageIdentifierMismatch` and
+`AuthClientError::UriOriginMismatch` are the two refusals. Both are covered by
+loopback tests that count signer invocations, because a call count of zero is
+the difference between "the login failed" and "the key was never used", and
+only the second is a defence.
 
 ### 6.3 Session Request
 
@@ -306,7 +405,8 @@ Content-Type: application/json
 {
   "did": "<string>",
   "nonce": "<string>",
-  "signature": "<string>"
+  "signature": "<string>",
+  "public_key": "<string, optional>"
 }
 ```
 
@@ -315,11 +415,26 @@ Content-Type: application/json
 | `did` | string | The DID that signed the challenge |
 | `nonce` | string | The nonce from the challenge response |
 | `signature` | string | Hex-encoded signature bytes, with or without `0x` prefix |
+| `public_key` | string, optional | Hex-encoded raw public key, for namespaces whose verifier can obtain it neither from the DID nor from the signature. Present for `aqua` only |
 
 The `signature` field carries the raw signature bytes hex-encoded. The server
 strips an optional `0x` prefix before decoding. Clients MUST supply the full
 signature bytes: 65 bytes for `eip155`, 64 bytes for `ed25519`, 64 bytes
-(fixed) or DER-variable for `p256`.
+(fixed) or DER-variable for `p256`, 4627 bytes for `aqua`.
+
+**`public_key`** is a non-breaking addition under section 8's rule for new
+optional fields. Clients MUST omit it entirely for every namespace but `aqua`,
+where it carries the 2592-byte ML-DSA-87 `pkEncode` key (5184 hex characters,
+5186 with the `0x` prefix). Servers that do not implement `aqua` MUST ignore
+it, which section 8 already requires of any unknown field.
+
+Servers MUST bind `public_key` to `did` before trusting it (section 5.4, step
+1). A key that is accepted without being bound authenticates possession of
+some identity rather than of the one presented, which is the whole attack this
+field would otherwise open.
+
+A session request carrying a `did:aqua` is about 14.3 KB. Deployments MUST NOT
+set a body limit below that on `POST /auth/session`.
 
 ### 6.4 Session Response
 
@@ -350,6 +465,40 @@ Authorization: Bearer <token>
 The token is opaque; clients must not parse or decode it. Sessions are
 validated by the server against an in-memory `SessionStore`. Sessions do not
 survive server restarts.
+
+### 6.6 Key transport for `aqua`, and the alternatives not taken
+
+Four transports were evaluated for getting the ML-DSA-87 public key to the
+verifier (2026-09-11). The one specified above is **A**.
+
+| | Wire, steady state | New state | First contact | Chosen |
+|---|---|---|---|---|
+| **A** key on the session request | 14.3 KB per login | none | works | **yes** |
+| **B** key at challenge time | n/a | none | n/a | no |
+| **C** register once, look up thereafter | ~200 B | key store + registration endpoint | fails until registered | no |
+| **D** DID document resolution | ~200 B + resolver fetch | resolver service + W3C method registration | works | no |
+
+**B is not implementable.** `GET /auth/challenge` carries its parameters in
+the query string, and a 5184-character hex key exceeds the 4-8 KB header
+buffer common to deployed proxies. It would also mean holding unauthenticated
+caller-supplied key material across the round trip for no benefit.
+
+**C and D were rejected on cost, not on security.** All four transports are
+equally trustless: because the DID is a hash of the key, the binding check in
+section 5.4 step 1 neutralises a lying client, a squatting registrant and a
+malicious resolver alike. What separates them is operational weight. C buys a
+14 KB saving and pays a key store, a registration endpoint, a first-contact
+retry path, and a lockout mode if that store is cleared. D additionally puts
+network I/O in the login path and requires the W3C method registration that
+PCA-0017 section 2.3 explicitly defers "before the method is used on any
+surface that resolves DIDs". At a one-hour session TTL, A costs a client
+roughly 343 KB per day.
+
+**C remains the documented future optimisation.** If login volume ever makes
+14.3 KB per session matter, a key store is the answer, and adopting it is a
+pure addition: `public_key` is already optional, and a stored key and a wire
+key are validated by the same binding check. No trust model changes and no
+existing client breaks.
 
 ---
 
@@ -430,8 +579,9 @@ This specification does not cover:
 - Cross-service session sharing or federation.
 - The internal storage backend for challenges and sessions (currently
   in-memory; persistence is out of scope).
-- Key rotation for the DID's signing key (the DID itself encodes the current
-  public key; rotation requires a new DID).
+- Key rotation for the DID's signing key (the DID commits to the current
+  public key, by embedding it for `did:key` / `did:pkh` / `did:peer` or by
+  hashing it for `aqua`; either way rotation requires a new DID).
 - WebAuthn integration beyond what P-256 ECDSA natively supports.
 
 ---

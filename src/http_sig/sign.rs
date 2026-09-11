@@ -122,7 +122,11 @@ fn generate_nonce() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
+// These tests use the boolean verifier deliberately: they assert that a
+// signature does or does not verify, which is exactly the yes/no question
+// `verify_caip122` still exists to answer. Not a pending migration.
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::super::test_signers::{Ed25519TestSigner, Eip155TestSigner, P256TestSigner};
     use super::super::*;

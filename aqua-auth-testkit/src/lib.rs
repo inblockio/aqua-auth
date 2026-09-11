@@ -22,11 +22,13 @@
 //! `tests/` so they always compile with the features they need; aqua-auth's
 //! own feature-lane matrix is unaffected by this crate.
 
+#[cfg(feature = "conformance")]
+pub mod conformance;
 pub mod signers;
 
 use aqua_auth::http_sig::{NonceReplayGuard, RequestParts, VerifyOptions};
 use aqua_auth::wire::{ChallengeEnvelope, SessionRequest, SessionResponse};
-use aqua_auth::{authenticate, AuthError, ChallengeStore, SessionStore, Signer};
+use aqua_auth::{AuthError, ChallengeStore, SessionStore, Signer};
 use aqua_auth_directory::{
     render_aqua_identity, render_jwks, AdvertisedKey, DirectoryDocument, DirectoryError,
     KeyRegistry, WELL_KNOWN_AQUA_IDENTITY, WELL_KNOWN_HTTP_MESSAGE_SIGNATURES,
@@ -266,8 +268,26 @@ async fn session_handler(
 
     let signature = hex::decode(request.signature.trim_start_matches("0x"))
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let principal = authenticate(&request.did, &stored.message, &signature)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // `did:aqua` carries its public key in the request because its verifier
+    // can obtain it neither from the DID nor from the signature. Every other
+    // namespace sends nothing here and the argument is ignored, so one call
+    // serves both. The key is bound back to the DID inside `authenticate`,
+    // never trusted as presented.
+    let public_key = match request.public_key.as_deref() {
+        Some(hex_pk) => Some(
+            hex::decode(hex_pk.trim_start_matches("0x")).map_err(|_| StatusCode::UNAUTHORIZED)?,
+        ),
+        None => None,
+    };
+
+    let principal = aqua_auth::authenticate_with_public_key(
+        &request.did,
+        &stored.message,
+        &signature,
+        public_key.as_deref(),
+    )
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     let session = state
         .sessions

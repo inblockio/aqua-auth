@@ -36,16 +36,31 @@ pub mod signer;
 pub use cipher_suite::{all_cipher_suites, find_cipher_suite, CipherSuite};
 pub use crypto_error::CryptoError;
 pub use did::{
-    address_from_did, address_from_verifying_key, checksummed_address, eip55_checksum,
-    identifier_from_did, identifier_from_message, parse_did_namespace, pubkey_from_ed25519_did,
-    pubkey_from_p256_did,
+    address_from_did, address_from_verifying_key, checksummed_address, ed25519_did_key_from_pubkey,
+    eip55_checksum, identifier_from_did, identifier_from_message, p256_did_key_from_pubkey,
+    parse_did_namespace, pubkey_from_ed25519_did, pubkey_from_p256_did,
 };
 pub use did_method::{all_did_methods, find_did_method, DIDMethod};
 pub use key::{ed25519_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite};
 pub use peer::PeerMethod;
 pub use pkh::{Eip155Suite, PkhMethod};
-pub use principal::{authenticate, Principal};
+pub use principal::{authenticate, authenticate_with_public_key, Principal};
 pub use signer::{FnSigner, SignError, Signer};
+
+// --- Behind `local-key` feature (in-process PKCS#8 key custody) ---
+#[cfg(feature = "local-key")]
+pub mod local_key;
+#[cfg(feature = "local-key")]
+pub use local_key::{LocalKeyError, LocalKeySigner};
+
+// --- Behind `did-aqua` feature (ML-DSA-87 post-quantum namespace) ---
+#[cfg(feature = "did-aqua")]
+pub mod aqua;
+#[cfg(feature = "did-aqua")]
+pub use aqua::{
+    aqua_did_binds_pubkey, aqua_did_from_pubkey, multihash_from_aqua_did, AquaMethod,
+    ML_DSA_87_PUBLIC_KEY_BYTES, ML_DSA_87_SIGNATURE_BYTES,
+};
 
 // --- Behind `http` feature (session/auth layer) ---
 #[cfg(feature = "http")]
@@ -127,13 +142,70 @@ pub use webauthn_ceremony::{
 /// Verify a CAIP-122 session signature.
 ///
 /// Dispatches to the DIDMethod registry (did:pkh, did:key, did:peer).
+///
+/// This cannot serve `did:aqua`, whose verifier needs the signer's public key:
+/// that DID commits to an ML-DSA-87 key by hash and the scheme has no
+/// public-key recovery, so there is nothing to dispatch on. Calling this with
+/// a `did:aqua` returns an error naming
+/// [`verify_caip122_with_public_key`]; use that instead when a deployment
+/// accepts post-quantum identities.
+///
+/// # Deprecated in favour of [`authenticate`]
+///
+/// Ruled 2026-09-11: [`authenticate`] is the correct entry point, because a
+/// `bool` is the wrong return type for proof of possession. Nothing in the
+/// type system stops a caller from verifying one DID and then creating a
+/// session for another, and `Ok(false)` is as easy to ignore as any other
+/// boolean. [`Principal`] can only be constructed by a successful
+/// verification, so "this DID demonstrably signed this message" becomes a
+/// value you have to hold rather than a check you have to remember.
+///
+/// This is a warning, not a removal. The function still works and is still
+/// supported for callers that genuinely only want the yes/no.
+#[deprecated(
+    since = "0.8.0",
+    note = "use `authenticate(did, message, signature)`, which returns \
+            `Result<Principal, CryptoError>` instead of `Result<bool, _>`. \
+            Two things change at the call site: you get a `Principal` rather \
+            than `true`, so pass `principal.did()` on to session creation \
+            instead of the DID string you started with; and a bad signature \
+            is now `Err(CryptoError::InvalidSignature)` rather than \
+            `Ok(false)`, so the `Ok(false) => reject` arm becomes part of the \
+            error arm. For `did:aqua`, call `authenticate_with_public_key` \
+            and pass the key from the session request. This function is not \
+            being removed; silence this warning with `#[allow(deprecated)]` \
+            if you only need the boolean."
+)]
 pub fn verify_caip122(did: &str, message: &str, signature: &[u8]) -> Result<bool, CryptoError> {
     let method =
         find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
     method.verify(did, message, signature)
 }
 
+/// Verify a CAIP-122 session signature, with the signer's public key supplied
+/// separately for methods that need it.
+///
+/// The key-aware twin of [`verify_caip122`]. Pass `None` for every classical
+/// namespace, where it is ignored, and `Some` for `did:aqua`. Where the key
+/// comes from is the caller's choice: the session request body today, a store
+/// or a resolver later. Whatever the source, the key is bound back to the DID
+/// before it is trusted.
+pub fn verify_caip122_with_public_key(
+    did: &str,
+    message: &str,
+    signature: &[u8],
+    public_key: Option<&[u8]>,
+) -> Result<bool, CryptoError> {
+    let method =
+        find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
+    method.verify_with_public_key(did, message, signature, public_key)
+}
+
+// These tests use the boolean verifier deliberately: they assert that a
+// signature does or does not verify, which is exactly the yes/no question
+// `verify_caip122` still exists to answer. Not a pending migration.
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

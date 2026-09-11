@@ -177,7 +177,11 @@ impl ChallengeStore {
     }
 }
 
+// These tests use the boolean verifier deliberately: they assert that a
+// signature does or does not verify, which is exactly the yes/no question
+// `verify_caip122` still exists to answer. Not a pending migration.
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

@@ -81,7 +81,29 @@ impl Principal {
 /// on failure. `verify_caip122` (returning `bool`) remains for callers that only
 /// need the yes/no.
 pub fn authenticate(did: &str, message: &str, signature: &[u8]) -> Result<Principal, CryptoError> {
-    if crate::verify_caip122(did, message, signature)? {
+    authenticate_with_public_key(did, message, signature, None)
+}
+
+/// Log a user in when the method needs the signer's public key supplied
+/// separately.
+///
+/// The key-aware twin of [`authenticate`], and the entry point a deployment
+/// that accepts `did:aqua` should call. `public_key` is ignored for every
+/// classical namespace, so a server can route every login through this one
+/// function and pass whatever the request carried.
+///
+/// The returned [`Principal`] means the same thing either way: this DID
+/// demonstrably signed this message. For `did:aqua` that involves one extra
+/// step, binding the supplied key back to the DID's hash commitment before
+/// the signature is checked at all, so a `Principal` can never be minted for
+/// an identity whose key the caller did not actually hold.
+pub fn authenticate_with_public_key(
+    did: &str,
+    message: &str,
+    signature: &[u8],
+    public_key: Option<&[u8]>,
+) -> Result<Principal, CryptoError> {
+    if crate::verify_caip122_with_public_key(did, message, signature, public_key)? {
         Principal::from_trusted_did(did)
     } else {
         Err(CryptoError::InvalidSignature(

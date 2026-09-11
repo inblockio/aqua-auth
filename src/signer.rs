@@ -31,6 +31,25 @@ pub trait Signer: Send + Sync {
     /// Sign an opaque message string (CAIP-122 message or RFC 9421 signature
     /// base). Awaitable so remote and interactive backends fit.
     async fn sign(&self, message: &str) -> Result<Vec<u8>, SignError>;
+
+    /// The raw public key, for the one namespace whose verifier cannot
+    /// obtain it any other way.
+    ///
+    /// `None` for every classical signer, which is the default: a verifier
+    /// handed a `did:key`, `did:pkh` or `did:peer` either decodes the key out
+    /// of the DID or recovers it from the signature, so sending it would be
+    /// redundant bytes.
+    ///
+    /// `Some` only for `did:aqua`, where the DID is a SHA3-256 commitment to
+    /// a 2592-byte ML-DSA-87 key and the scheme has no public-key recovery.
+    /// The key is public by definition, so exposing it here leaks nothing;
+    /// the private half never crosses this trait.
+    ///
+    /// Added in 0.8.0 with a default body, so existing implementations
+    /// compile unchanged.
+    fn public_key(&self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// A [`Signer`] built from a plain synchronous closure.
@@ -96,7 +115,11 @@ where
     }
 }
 
+// These tests use the boolean verifier deliberately: they assert that a
+// signature does or does not verify, which is exactly the yes/no question
+// `verify_caip122` still exists to answer. Not a pending migration.
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::verify_caip122;

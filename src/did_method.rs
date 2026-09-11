@@ -45,8 +45,41 @@ pub trait DIDMethod: Send + Sync {
     /// - `did` -- the signer's full DID string
     /// - `canonical_msg` -- the canonical CAIP-122 message that was signed
     /// - `signature` -- raw signature bytes (caller hex-decodes from cookie)
+    ///
+    /// Methods whose DID does not carry the public key and whose scheme has
+    /// no key recovery cannot be served by this signature; they return an
+    /// error here and implement [`Self::verify_with_public_key`] instead.
     fn verify(&self, did: &str, canonical_msg: &str, signature: &[u8])
         -> Result<bool, CryptoError>;
+
+    /// Verify a CAIP-122 signature, with the signer's public key supplied
+    /// separately when the method needs it.
+    ///
+    /// Every method that embeds its key in the DID (`did:key`,
+    /// `did:pkh:{ed25519,p256}`, `did:peer`) or recovers it from the
+    /// signature (`did:pkh:eip155`) ignores `public_key` entirely, which is
+    /// what the default implementation does. Only `did:aqua` needs it: it
+    /// commits to an ML-DSA-87 key by hash, and ML-DSA has no public-key
+    /// recovery, so the key can come from neither place.
+    ///
+    /// **Where the key comes from is the caller's problem, deliberately.**
+    /// This method is synchronous, so a handler that sources the key from a
+    /// store or a resolver does that lookup first and passes the result in.
+    /// Keeping resolution outside the trait is what lets the wire transport
+    /// change later without touching this signature or any implementation.
+    ///
+    /// Added in 0.8.0 with a default body, so existing implementations
+    /// compile unchanged.
+    fn verify_with_public_key(
+        &self,
+        did: &str,
+        canonical_msg: &str,
+        signature: &[u8],
+        public_key: Option<&[u8]>,
+    ) -> Result<bool, CryptoError> {
+        let _ = public_key;
+        self.verify(did, canonical_msg, signature)
+    }
 }
 
 /// All registered DID method handlers, in priority order.
@@ -56,11 +89,19 @@ pub fn all_did_methods() -> Vec<Box<dyn DIDMethod>> {
     use crate::key::KeyMethod;
     use crate::peer::PeerMethod;
     use crate::pkh::PkhMethod;
-    vec![
+    #[allow(unused_mut)]
+    let mut methods: Vec<Box<dyn DIDMethod>> = vec![
         Box::new(PkhMethod),
         Box::new(KeyMethod),
         Box::new(PeerMethod),
-    ]
+    ];
+    // `did:aqua` is the one gated namespace: it pulls the `ml-dsa` stack,
+    // which a deployment with no post-quantum identities should not have to
+    // build or audit. See README "Feature flags" for why this one is an
+    // exception to the otherwise-universal namespace rule.
+    #[cfg(feature = "did-aqua")]
+    methods.push(Box::new(crate::aqua::AquaMethod));
+    methods
 }
 
 /// Find the handler for `did`, or `None` if no registered method matches.

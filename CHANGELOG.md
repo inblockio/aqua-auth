@@ -6,6 +6,159 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+### Changed
+
+- **`wire::ChallengeEnvelope` does not carry `did`**, and tolerates servers
+  that send one. Earlier on 2026-09-11 the field was added to match `SPEC.md`
+  Section 6.2; later the same day it was removed again and Section 6.2 amended
+  to match, on the rule that a part you do not need is a part you should not
+  have.
+
+  Nothing consumed it. The client's binding check compares the identifier
+  inside `message` against the **signer's own** DID, never an envelope field,
+  so the one place the field could have mattered never read it. `did:aqua`
+  carries its public key on `SessionRequest`. A field no code reads is a
+  second place to state an identity and therefore a second place for it to
+  disagree with the first.
+
+  **This is not a breaking change and requires no server change.** There is no
+  `deny_unknown_fields`, so servers keep emitting `did` and serde keeps
+  discarding it. It also restores compatibility with `timestamp.inblock.io`,
+  which has never sent the field; requiring it would have made that endpoint
+  unparseable for every client built on this crate.
+
+  Section 6.2 now also specifies the **URI origin binding check**, which was
+  implemented and tested in `client::signed_session_request` but appeared in
+  no specification text. It is what refuses a challenge relayed from another
+  Aqua service, and with `did` gone the two client-side checks and their
+  ordering are the entire mitigation, so they belong in the spec rather than
+  only in the code.
+
+### Deprecated
+
+- **`verify_caip122` in favour of `authenticate`.** This deprecation, together
+  with the new `local-key` and `AuthSession` surfaces, is what carries the
+  0.8.0 bump; the wire format is unchanged in both directions. Ruled 2026-09-11: a `bool`
+  is the wrong return type for proof of possession. Nothing in the type system
+  stops a caller verifying one DID and creating a session for another, and
+  `Ok(false)` is as easy to drop as any other boolean, whereas a `Principal`
+  can only exist because a verification succeeded.
+
+  **This is a warning, not a removal.** `verify_caip122` still works, is still
+  supported for callers that genuinely only need the yes/no, and the
+  deprecation note says so along with what changes at a call site. No consumer
+  is required to move, and none has been moved: aqua-node and aquafier-rs are
+  untouched by this release.
+
+  The warning is the migration mechanism. Consumers that only want the boolean
+  silence it with `#[allow(deprecated)]`; the crate's own tests do exactly
+  that, since asserting "this signature verifies" is the question the boolean
+  verifier exists to answer.
+
+  `authenticate` itself no longer routes through `verify_caip122` at all: it
+  delegates to `authenticate_with_public_key`, which calls
+  `verify_caip122_with_public_key` and reaches the registry directly. The
+  library therefore builds warning-free with no production-path `allow`.
+
+### Added
+
+- **`did:aqua`, the ML-DSA-87 post-quantum namespace (PCA-0017)**, behind the
+  new `did-aqua` feature, off by default. A `did:aqua` identity can complete a
+  CAIP-122 login and be issued a session.
+
+  This is the first namespace whose verifier can obtain the public key neither
+  from the DID nor from the signature. The other namespaces do one or the
+  other: `did:key`, `did:pkh:{ed25519,p256}` and `did:peer` embed the key and
+  decode it out, while `did:pkh:eip155` hashes it and recovers the key from
+  the signature, which works only because secp256k1 ECDSA is recoverable.
+  ML-DSA has no recovery, and `did:aqua` is a SHA3-256 commitment, so the key
+  has to travel separately. It does so in a new optional `public_key` field on
+  the session request (`SPEC.md` section 6.3), and the server binds it back to
+  the DID before trusting it. See `SPEC.md` section 6.6 for the four
+  transports evaluated and why this one was taken.
+
+  **Read this before deploying it.** A `did:aqua` identity will authenticate
+  and then fail at every authorization boundary. Both servers carry DID
+  dispatch outside this crate's registry that predates the namespace:
+  `aquafier-delegated-keys` hard-rejects any DID that is not `did:key` or
+  `did:pkh`, and both `ceremony_signature_type` implementations silently
+  label an unrecognised DID as an Ethereum signer. Enabling `did-aqua` gets
+  you login, not a working agent identity. Tracked in
+  `docs/did-aqua-phase-2.md`.
+
+  The codec is reimplemented here rather than taken from `aqua-rs-sdk`, so
+  this crate continues to depend on no Aqua crate and never inherits the SDK's
+  pin. The two implementations are held together by the PCA-0017 section 5.1
+  published vector, pinned as a test: if they ever diverge, that test fails
+  here rather than a signature failing in production. `ml-dsa` is pinned to
+  0.1.1, exactly the version the SDK uses, because the one thing that must not
+  diverge is what actually verifies.
+
+- **`DIDMethod::verify_with_public_key`**, `verify_caip122_with_public_key`
+  and `authenticate_with_public_key`: the key-aware twins of the existing
+  entry points. All additive, all with default bodies, so every existing
+  `DIDMethod` implementation compiles unchanged.
+
+  **Non-breaking for compilation, not for semantics.** A server that upgrades
+  without plumbing the key through will 401 every `did:aqua` login rather than
+  fail to build. That is the intended failure direction, but it is a runtime
+  behaviour a deployment has to opt into rather than something the compiler
+  will point at. Classical namespaces are entirely unaffected: they ignore the
+  new argument.
+
+  `CipherSuite` deliberately does **not** get the same change. It is internal
+  to `PkhMethod`, and `did:aqua` is its own method rather than a `did:pkh`
+  namespace.
+
+- **`Signer::public_key()`**, defaulting to `None`. Only a `did:aqua` signer
+  answers it. The key is public by definition and the private half never
+  crosses the trait.
+
+- **`aqua_auth_testkit::signers::did_aqua()`**, a sixth spelling for the e2e
+  harness, with adversarial coverage of the key binding: a valid signature
+  presented under a DID committing to another key, a substituted key, and a
+  missing key are all refused.
+
+
+- **`did::ed25519_did_key_from_pubkey` / `did::p256_did_key_from_pubkey`**: the
+  encode direction for `did:key`, which the crate had never exported. Only the
+  decoders existed, so every producer open-coded multicodec plus base58btc:
+  six times inside this crate, plus the testkit, aqua-agents, the SDK and siwx.
+  A DID string is an identity, and two producers that disagree mint two
+  identities for one key. `webauthn_ceremony::did_key_from_p256_compressed` now
+  delegates here and its duplicate multicodec constant is gone; its output is
+  unchanged and covered by a test.
+
+  Named for the `did:key` spelling rather than the curve because the `did:key`
+  and `did:pkh` forms of one key are distinct principals (#182), and a
+  curve-only name would let a caller mint the wrong one silently.
+
+- **`LocalKeySigner`** behind the new `local-key` feature: a `Signer` over an
+  Ed25519 or P-256 PKCS#8 PEM held in this process, deriving its own `did:key`
+  through the encoders above so the key and the DID cannot drift apart. The
+  crate shipped the `Signer` trait and `FnSigner` but nothing that loads a key,
+  so every consumer wrote this. Opt-in because raw key material in process
+  memory is what a production signer should avoid. `Debug` is implemented by
+  hand and redacts the key.
+
+- **`client::AuthSession`** behind `client`: an authenticated session that
+  re-runs the CAIP-122 login once on a `401` and retries the request. `SPEC.md`
+  section 6.5 makes sessions server-memory-resident and explicitly not durable
+  across a restart, so a long-lived client's token can die at any time;
+  `authenticate()` alone left every consumer writing the same retry. The token
+  is handed to a caller-supplied request builder rather than attached here,
+  because the Aqua node dialects accept it as a Bearer header, a `nonce` header
+  or an `aqua_session` cookie. Covered by two loopback e2e tests, including one
+  that counts signer invocations to prove the recovery re-runs the ceremony
+  rather than replaying a cached signature.
+
+### Changed
+
+- `CONSUMERS.md` re-verified against 0.7.0: siwx-oidc is now tag-pinned
+  (`v0.7.0`, 2026-09-11) rather than unpinned, and `aqua-agents` is recorded as
+  a transitive consumer that wants `client` but is blocked on the URL-spelling
+  rule.
+
 ## [0.7.0] - 2026-08-31
 
 Async credential store. 0.6.0 removed the Redis *session* backend, which was

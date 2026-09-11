@@ -134,10 +134,18 @@ async fn signed_session_request(
         .await
         .map_err(|e| AuthClientError::Sign(e.to_string()))?;
 
+    // 4. Attach the public key when the signer offers one. Only `did:aqua`
+    //    does: its verifier can obtain the key neither from the DID (a
+    //    SHA3-256 commitment) nor from the signature (ML-DSA has no
+    //    recovery). Classical signers return None and the field is omitted,
+    //    so their request bytes are unchanged.
     Ok(SessionRequest {
         did: did.to_string(),
         nonce: envelope.nonce,
         signature: format!("0x{}", hex::encode(sig_bytes)),
+        public_key: signer
+            .public_key()
+            .map(|pk| format!("0x{}", hex::encode(pk))),
     })
 }
 
@@ -212,6 +220,113 @@ fn origin_of(raw: &str) -> Option<String> {
     }
 }
 
+/// An authenticated session that re-logs in when the server forgets it.
+///
+/// [`authenticate`] performs one login and hands back a [`Session`]. That is
+/// not enough for anything long-lived, because `SPEC.md` section 6.5 says
+/// sessions live in the server's memory and do not survive a restart: the
+/// token a client is holding can stop working at any moment, through no fault
+/// of the client. Every long-running consumer therefore ends up writing the
+/// same loop, and aqua-agents did exactly that before this type existed.
+///
+/// [`AuthSession::send`] runs a caller-built request, and on `401` re-runs the
+/// CAIP-122 login once and retries the request exactly once with the fresh
+/// token. One retry, not a loop: a second `401` after a successful re-login is
+/// an authorization problem, not an expiry, and retrying it would spin.
+///
+/// The token is passed to the closure rather than attached here, because the
+/// Aqua node dialects accept it three different ways: `Authorization: Bearer`,
+/// a `nonce` header, and an `aqua_session` cookie. Staying scheme-agnostic is
+/// what lets one client work against aqua-node and aquafier alike.
+///
+/// ```no_run
+/// use aqua_auth::client::AuthSession;
+/// # async fn run(signer: &dyn aqua_auth::Signer) -> Result<(), Box<dyn std::error::Error>> {
+/// let http = reqwest::Client::new();
+/// let mut session = AuthSession::login(http, "https://node.example", signer).await?;
+/// let resp = session
+///     .send(signer, |c, base, token| {
+///         c.get(format!("{base}/api/folders")).header("nonce", token)
+///     })
+///     .await?;
+/// # let _ = resp;
+/// # Ok(())
+/// # }
+/// ```
+pub struct AuthSession {
+    http: reqwest::Client,
+    base_url: String,
+    session: Session,
+}
+
+impl AuthSession {
+    /// Log in and hold the resulting session.
+    pub async fn login(
+        http: reqwest::Client,
+        base_url: impl Into<String>,
+        signer: &dyn Signer,
+    ) -> Result<Self, AuthClientError> {
+        let base_url = base_url.into();
+        let session = authenticate(&http, &base_url, signer).await?;
+        Ok(Self {
+            http,
+            base_url,
+            session,
+        })
+    }
+
+    /// The base URL this session authenticated against.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// The current session token.
+    pub fn token(&self) -> &str {
+        &self.session.token
+    }
+
+    /// The authenticated DID.
+    pub fn did(&self) -> &str {
+        &self.session.did
+    }
+
+    /// The underlying session record, including its expiry.
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    /// Run an authenticated request, re-logging in once on `401`.
+    ///
+    /// `build` receives the HTTP client, the base URL and the current token,
+    /// and returns the request to send. It is called again with the new token
+    /// if the first attempt comes back `401`, so it must be able to run twice.
+    pub async fn send<F>(
+        &mut self,
+        signer: &dyn Signer,
+        build: F,
+    ) -> Result<reqwest::Response, AuthClientError>
+    where
+        F: Fn(&reqwest::Client, &str, &str) -> reqwest::RequestBuilder,
+    {
+        let first = build(&self.http, &self.base_url, &self.session.token)
+            .send()
+            .await
+            .map_err(AuthClientError::Http)?;
+
+        if first.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(first);
+        }
+
+        // The server forgot us (restart, or the TTL lapsed). Re-establish
+        // proof of possession and replay the request once.
+        self.session = authenticate(&self.http, &self.base_url, signer).await?;
+        build(&self.http, &self.base_url, &self.session.token)
+            .send()
+            .await
+            .map_err(AuthClientError::Http)
+    }
+}
+
 /// Errors from the client authentication flow.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthClientError {
@@ -230,7 +345,11 @@ pub enum AuthClientError {
     },
 }
 
+// These tests use the boolean verifier deliberately: they assert that a
+// signature does or does not verify, which is exactly the yes/no question
+// `verify_caip122` still exists to answer. Not a pending migration.
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
