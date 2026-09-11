@@ -149,6 +149,33 @@ pub use webauthn_ceremony::{
 /// a `did:aqua` returns an error naming
 /// [`verify_caip122_with_public_key`]; use that instead when a deployment
 /// accepts post-quantum identities.
+///
+/// # Deprecated in favour of [`authenticate`]
+///
+/// Ruled 2026-09-11: [`authenticate`] is the correct entry point, because a
+/// `bool` is the wrong return type for proof of possession. Nothing in the
+/// type system stops a caller from verifying one DID and then creating a
+/// session for another, and `Ok(false)` is as easy to ignore as any other
+/// boolean. [`Principal`] can only be constructed by a successful
+/// verification, so "this DID demonstrably signed this message" becomes a
+/// value you have to hold rather than a check you have to remember.
+///
+/// This is a warning, not a removal. The function still works and is still
+/// supported for callers that genuinely only want the yes/no.
+#[deprecated(
+    since = "0.8.0",
+    note = "use `authenticate(did, message, signature)`, which returns \
+            `Result<Principal, CryptoError>` instead of `Result<bool, _>`. \
+            Two things change at the call site: you get a `Principal` rather \
+            than `true`, so pass `principal.did()` on to session creation \
+            instead of the DID string you started with; and a bad signature \
+            is now `Err(CryptoError::InvalidSignature)` rather than \
+            `Ok(false)`, so the `Ok(false) => reject` arm becomes part of the \
+            error arm. For `did:aqua`, call `authenticate_with_public_key` \
+            and pass the key from the session request. This function is not \
+            being removed; silence this warning with `#[allow(deprecated)]` \
+            if you only need the boolean."
+)]
 pub fn verify_caip122(did: &str, message: &str, signature: &[u8]) -> Result<bool, CryptoError> {
     let method =
         find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
@@ -174,7 +201,11 @@ pub fn verify_caip122_with_public_key(
     method.verify_with_public_key(did, message, signature, public_key)
 }
 
+// These tests use the boolean verifier deliberately: they assert that a
+// signature does or does not verify, which is exactly the yes/no question
+// `verify_caip122` still exists to answer. Not a pending migration.
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

@@ -11,6 +11,9 @@
 //! Per the project verifier test policy, each of the three suites gets the
 //! full set: roundtrip, wrong DID, tampered message, malformed signature.
 
+// Asserts signatures verify or do not; the boolean verifier is the right
+// instrument for that and is still supported.
+#![allow(deprecated)]
 #![cfg(feature = "http-sig")]
 
 use aqua_auth::http_sig::{

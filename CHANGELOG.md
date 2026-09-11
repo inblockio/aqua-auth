@@ -6,6 +6,49 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+### Changed
+
+- **`wire::ChallengeEnvelope` now carries `did`**, matching `SPEC.md` Section
+  6.2 field for field. It did not before: the spec required the field, every
+  Aqua server emitted it, and the type declared as "the canonical wire shape"
+  omitted it. Interop held only because serde ignores unknown fields, so the
+  crate contradicted its own specification in a way nothing could fail on.
+  Ruled 2026-09-11: the type moves to the spec.
+
+  Breaking for anyone deserializing a three-field envelope. One deployed
+  server is known to emit that shape, `timestamp.inblock.io`, whose repo is
+  already recorded in `CONSUMERS.md` as orphaned and whose client call site is
+  already statically broken against any post-0.5.0 release, so nothing
+  current-generation can reach it. `wire::a_did_less_envelope_is_refused`
+  pins the new behaviour and records why rather than leaving it to a parse
+  error. Section 6.2's open question ("a future version may remove `did`") is
+  resolved in the same pass: the field stays and the client-side identifier
+  check is the defence.
+
+### Deprecated
+
+- **`verify_caip122` in favour of `authenticate`.** Ruled 2026-09-11: a `bool`
+  is the wrong return type for proof of possession. Nothing in the type system
+  stops a caller verifying one DID and creating a session for another, and
+  `Ok(false)` is as easy to drop as any other boolean, whereas a `Principal`
+  can only exist because a verification succeeded.
+
+  **This is a warning, not a removal.** `verify_caip122` still works, is still
+  supported for callers that genuinely only need the yes/no, and the
+  deprecation note says so along with what changes at a call site. No consumer
+  is required to move, and none has been moved: aqua-node and aquafier-rs are
+  untouched by this release.
+
+  The warning is the migration mechanism. Consumers that only want the boolean
+  silence it with `#[allow(deprecated)]`; the crate's own tests do exactly
+  that, since asserting "this signature verifies" is the question the boolean
+  verifier exists to answer.
+
+  `authenticate` itself no longer routes through `verify_caip122` at all: it
+  delegates to `authenticate_with_public_key`, which calls
+  `verify_caip122_with_public_key` and reaches the registry directly. The
+  library therefore builds warning-free with no production-path `allow`.
+
 ### Added
 
 - **`did:aqua`, the ML-DSA-87 post-quantum namespace (PCA-0017)**, behind the

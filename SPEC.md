@@ -351,12 +351,25 @@ reference client in `src/client.rs`).
 | `message` | string | The full canonical CAIP-122 message to sign |
 | `expires_at` | u64 | Unix timestamp (seconds) when the challenge expires (5-minute TTL by default) |
 
-**Implementation note:** the `did` field is redundant with the message body
-(the message already encodes the identifier), and its presence creates a
-potential envelope/body mismatch attack surface where the DID in the response
-envelope could differ from the DID embedded in the message. A future version
-of this spec may remove `did` from the challenge response. Clients SHOULD
-verify that the identifier in `message` matches the DID they requested.
+**Implementation note:** `did` is redundant with the message body, which
+already encodes the identifier, and that redundancy is a mismatch surface: a
+server can return an envelope naming one DID wrapped around a message naming
+another.
+
+Resolved 2026-09-11: the field **stays**, and the defence is the client check
+below rather than removal. Every Aqua server emits it, and until this date
+`wire::ChallengeEnvelope` omitted it, so the reference type and this section
+disagreed and interop held only because serde ignores unknown fields. The type
+now matches this table field for field.
+
+Clients MUST verify that the identifier in `message` matches the DID they
+requested, before signing. The reference client does this in
+`client::signed_session_request`, alongside a second check this document does
+not yet specify: the `URI:` line's origin must match the origin the client
+dialled, which is what refuses a challenge relayed from another Aqua service.
+Both run before the signer is invoked. A client that signs first and validates
+afterwards has already produced a credential for whoever minted the challenge,
+so the ordering is the defence and not the checks alone.
 
 ### 6.3 Session Request
 

@@ -336,6 +336,7 @@ fn envelope_for(did: &str, uri: &str) -> ChallengeEnvelope {
     .expect("a supported DID yields a CAIP-122 message");
 
     ChallengeEnvelope {
+        did: did.to_string(),
         nonce,
         message,
         expires_at: 9_999_999_999,

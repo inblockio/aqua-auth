@@ -3,10 +3,9 @@
 //! These are the JSON shapes that travel over HTTP between client and server.
 //! They are intentionally distinct from the internal types in [`crate::types`]:
 //!
-//! - [`ChallengeEnvelope`]: what the server returns for `GET /auth/challenge`.
-//!   Notably absent: `did`. The client supplied the DID in the query string;
-//!   the message body already encodes the identifier. Including `did` in the
-//!   response envelope creates an envelope/body mismatch surface and is omitted.
+//! - [`ChallengeEnvelope`]: what the server returns for `GET /auth/challenge`,
+//!   including `did`, as `SPEC.md` Section 6.2 specifies and as every current
+//!   Aqua server emits.
 //! - [`SessionRequest`]: what the client posts to `POST /auth/session`.
 //! - [`SessionResponse`]: what the server returns from `POST /auth/session`.
 
@@ -14,14 +13,24 @@ use serde::{Deserialize, Serialize};
 
 /// Server -> client response body for `GET /auth/challenge?did=...`.
 ///
-/// The `did` field is deliberately absent: the message body already
-/// carries the identifier, the client supplied it in the query, and
-/// returning it separately creates an envelope/body mismatch surface.
+/// This is the canonical wire shape, and it now matches `SPEC.md` Section 6.2
+/// field for field. It did not before: the type omitted `did` while the spec
+/// required it and every Aqua server emitted it, so the crate contradicted its
+/// own specification and interop survived only because serde ignores unknown
+/// fields. Ruled 2026-09-11: the type moves to the spec, not the other way.
 ///
-/// This is the canonical wire shape. See [`crate::types::Challenge`] for the
-/// internal server-side stored record (which does carry `did`).
+/// `did` is redundant with the identifier inside `message`, which is exactly
+/// why it is a hazard rather than merely noise: the two can disagree. The
+/// defence is on the client, not in this type. [`crate::client::authenticate`]
+/// checks the identifier in `message` against the DID it asked for before it
+/// signs anything, so an envelope naming one identity around a message naming
+/// another is refused with the key untouched.
+///
+/// See [`crate::types::Challenge`] for the internal server-side stored record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChallengeEnvelope {
+    /// The DID the challenge was minted for, echoing the query parameter.
+    pub did: String,
     pub nonce: String,
     pub message: String,
     pub expires_at: u64,
@@ -66,12 +75,14 @@ mod tests {
     #[test]
     fn challenge_envelope_round_trip() {
         let env = ChallengeEnvelope {
+            did: "did:pkh:eip155:1:0xABCD".into(),
             nonce: "0xabc".into(),
             message: "Sign in with Ethereum".into(),
             expires_at: 9999999999,
         };
         let json = serde_json::to_string(&env).unwrap();
         let decoded: ChallengeEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.did, env.did);
         assert_eq!(decoded.nonce, env.nonce);
         assert_eq!(decoded.message, env.message);
         assert_eq!(decoded.expires_at, env.expires_at);
@@ -141,24 +152,43 @@ mod tests {
         assert_eq!(decoded.created_at, resp.created_at);
     }
 
-    /// Exact shape emitted by the deployed `timestamp.inblock.io` server today.
+    /// The shape every current Aqua server emits: aqua-node
+    /// (`aqua-rest/src/routes.rs`), aquafier-rs (`aquafier-auth/src/routes.rs`)
+    /// and the testkit peer all serialize the stored `Challenge` verbatim.
     #[test]
-    fn challenge_envelope_from_deployed_server_shape() {
-        let raw = r#"{"nonce":"0xabc","message":"hi","expires_at":1}"#;
+    fn challenge_envelope_parses_what_aqua_servers_emit() {
+        let raw =
+            r#"{"did":"did:pkh:eip155:1:0xABCD","nonce":"0xabc","message":"hi","expires_at":1}"#;
         let env: ChallengeEnvelope = serde_json::from_str(raw).unwrap();
+        assert_eq!(env.did, "did:pkh:eip155:1:0xABCD");
         assert_eq!(env.nonce, "0xabc");
         assert_eq!(env.message, "hi");
         assert_eq!(env.expires_at, 1);
     }
 
-    /// Forward-compat: servers that still emit `did` in the envelope must not
-    /// break the client. Serde ignores unknown fields by default.
+    /// A three-field envelope is now REJECTED, and that is a deliberate
+    /// consequence of the 2026-09-11 ruling, recorded here rather than left
+    /// for someone to rediscover from a parse error.
+    ///
+    /// One deployed server is known to emit this shape: `timestamp.inblock.io`,
+    /// the aqua-timestamps deployment. That repo is already documented in
+    /// `CONSUMERS.md` as orphaned and not buildable anywhere, and its
+    /// `client::authenticate` call site still uses the pre-0.5.0 four-argument
+    /// form, so no current-generation client can talk to it regardless. The
+    /// breakage is therefore on an endpoint nothing in-tree can reach.
+    ///
+    /// If that server is ever revived, the choice is to make it emit `did`
+    /// (one line, matching the spec) or to make this field `Option<String>`
+    /// here. Do not reintroduce tolerance silently: the whole point of the
+    /// ruling was to stop the type and the spec disagreeing.
     #[test]
-    fn challenge_envelope_tolerates_extra_did_field() {
-        let raw =
-            r#"{"did":"did:pkh:eip155:1:0xABCD","nonce":"0xabc","message":"hi","expires_at":1}"#;
-        let env: ChallengeEnvelope = serde_json::from_str(raw).unwrap();
-        assert_eq!(env.nonce, "0xabc");
-        assert_eq!(env.expires_at, 1);
+    fn a_did_less_envelope_is_refused() {
+        let raw = r#"{"nonce":"0xabc","message":"hi","expires_at":1}"#;
+        let err = serde_json::from_str::<ChallengeEnvelope>(raw)
+            .expect_err("an envelope without `did` no longer matches the spec");
+        assert!(
+            err.to_string().contains("did"),
+            "the parse error should name the missing field, got: {err}"
+        );
     }
 }
