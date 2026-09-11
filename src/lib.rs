@@ -124,6 +124,18 @@ pub use webauthn_ceremony::{
     FinishedRegistration, RegisterMode, StartedRegistration, WebauthnConfig,
 };
 
+// Async orchestration "spine": start/finish flow functions that thread the pure
+// ceremony wrappers together with the ceremony-state store and the async
+// credential store. Return-DTO design; the host issues its own session.
+#[cfg(feature = "ceremony")]
+pub mod webauthn_spine;
+#[cfg(feature = "ceremony")]
+pub use webauthn_spine::{
+    login_finish_flow, login_start_flow, register_finish_flow, register_start_flow,
+    CeremonyStateStore, LoginOutcome, RegisterOutcome, StartedLoginFlow, StartedRegistrationFlow,
+    MAX_PENDING_CEREMONIES,
+};
+
 /// Verify a CAIP-122 session signature.
 ///
 /// Dispatches to the DIDMethod registry (did:pkh, did:key, did:peer).
