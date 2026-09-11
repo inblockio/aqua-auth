@@ -324,28 +324,25 @@ pub async fn register_finish_flow(
 
 /// Phase 1 (login): build the request challenge and persist ceremony state.
 ///
-/// For a targeted login pass `Some(did)`: the DID's stored passkeys are fetched
-/// via [`WebauthnCredentialBackend::list_for_did`] to constrain
-/// `allowCredentials`. For discoverable (usernameless) login pass `None`.
+/// Targeted login only: `did`'s stored passkeys are fetched via
+/// [`WebauthnCredentialBackend::list_for_did`] to constrain `allowCredentials`.
+/// Discoverable (usernameless) login is intentionally not supported here — it
+/// requires the `webauthn-rs` `*_discoverable_authentication` API, not an
+/// empty-allow-list passkey authentication; add it when a consumer needs it.
 pub async fn login_start_flow(
     config: &dyn WebauthnConfig,
     states: &CeremonyStateStore,
     cred_backend: &dyn WebauthnCredentialBackend,
-    did: Option<&str>,
+    did: &str,
 ) -> Result<StartedLoginFlow, CeremonyError> {
-    let passkeys = match did {
-        Some(did) => {
-            let stored = cred_backend
-                .list_for_did(did)
-                .await
-                .map_err(|e| CeremonyError::Internal(format!("list credentials for {did}: {e}")))?;
-            stored
-                .iter()
-                .filter_map(|c| passkey_from_blob(&c.public_key))
-                .collect::<Vec<_>>()
-        }
-        None => Vec::new(),
-    };
+    let stored = cred_backend
+        .list_for_did(did)
+        .await
+        .map_err(|e| CeremonyError::Internal(format!("list credentials for {did}: {e}")))?;
+    let passkeys = stored
+        .iter()
+        .filter_map(|c| passkey_from_blob(&c.public_key))
+        .collect::<Vec<_>>();
     let webauthn = build_webauthn(config)?;
     let (options, state) = login_start(&webauthn, &passkeys)?;
     let challenge_id = states.put_authentication(state, config.challenge_ttl_login())?;
@@ -641,33 +638,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_start_flow_discoverable_persists_and_returns_options() {
-        let cfg = TestConfig::default();
-        let states = CeremonyStateStore::new();
-        let store = InMemoryWebauthnStore::new();
-        let out = login_start_flow(&cfg, &states, &store, None).await.unwrap();
-        assert!(!out.challenge_id.is_empty());
-        assert_eq!(states.len(), 1);
-        serde_json::to_string(&out.options).unwrap();
-        assert!(states.take_authentication(&out.challenge_id).is_ok());
-    }
-
-    #[tokio::test]
-    async fn login_start_flow_targeted_reads_stored_credentials() {
-        // Targeted login must fetch the DID's credentials via list_for_did. The
-        // stored blobs here are not valid Passkeys, so they filter out to an
-        // empty allowCredentials — exercising the fetch+filter path without a
-        // real authenticator.
+    async fn login_start_flow_persists_and_returns_options() {
+        // Targeted login fetches the DID's credentials via list_for_did, persists
+        // the challenge state, and returns serializable options. The stored blob
+        // here is not a valid Passkey, so it filters out to an empty
+        // allowCredentials — exercising the fetch+filter path without a real
+        // authenticator.
         let cfg = TestConfig::default();
         let states = CeremonyStateStore::new();
         let store = InMemoryWebauthnStore::new();
         let did = "did:key:zDnTargeted";
         store.insert(new_cred(did, b"cid", 0, None)).await.unwrap();
-        let out = login_start_flow(&cfg, &states, &store, Some(did))
-            .await
-            .unwrap();
+        let out = login_start_flow(&cfg, &states, &store, did).await.unwrap();
         assert!(!out.challenge_id.is_empty());
         assert_eq!(states.len(), 1);
+        serde_json::to_string(&out.options).unwrap();
+        assert!(states.take_authentication(&out.challenge_id).is_ok());
     }
 
     // ── Finish-flow store wiring (helpers, hand-built Finished* values) ──
