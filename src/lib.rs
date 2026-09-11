@@ -44,7 +44,7 @@ pub use did_method::{all_did_methods, find_did_method, DIDMethod};
 pub use key::{ed25519_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite};
 pub use peer::PeerMethod;
 pub use pkh::{Eip155Suite, PkhMethod};
-pub use principal::{authenticate, Principal};
+pub use principal::{authenticate, authenticate_with_public_key, Principal};
 pub use signer::{FnSigner, SignError, Signer};
 
 // --- Behind `local-key` feature (in-process PKCS#8 key custody) ---
@@ -142,10 +142,36 @@ pub use webauthn_ceremony::{
 /// Verify a CAIP-122 session signature.
 ///
 /// Dispatches to the DIDMethod registry (did:pkh, did:key, did:peer).
+///
+/// This cannot serve `did:aqua`, whose verifier needs the signer's public key:
+/// that DID commits to an ML-DSA-87 key by hash and the scheme has no
+/// public-key recovery, so there is nothing to dispatch on. Calling this with
+/// a `did:aqua` returns an error naming
+/// [`verify_caip122_with_public_key`]; use that instead when a deployment
+/// accepts post-quantum identities.
 pub fn verify_caip122(did: &str, message: &str, signature: &[u8]) -> Result<bool, CryptoError> {
     let method =
         find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
     method.verify(did, message, signature)
+}
+
+/// Verify a CAIP-122 session signature, with the signer's public key supplied
+/// separately for methods that need it.
+///
+/// The key-aware twin of [`verify_caip122`]. Pass `None` for every classical
+/// namespace, where it is ignored, and `Some` for `did:aqua`. Where the key
+/// comes from is the caller's choice: the session request body today, a store
+/// or a resolver later. Whatever the source, the key is bound back to the DID
+/// before it is trusted.
+pub fn verify_caip122_with_public_key(
+    did: &str,
+    message: &str,
+    signature: &[u8],
+    public_key: Option<&[u8]>,
+) -> Result<bool, CryptoError> {
+    let method =
+        find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
+    method.verify_with_public_key(did, message, signature, public_key)
 }
 
 #[cfg(test)]

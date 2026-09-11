@@ -134,10 +134,18 @@ async fn signed_session_request(
         .await
         .map_err(|e| AuthClientError::Sign(e.to_string()))?;
 
+    // 4. Attach the public key when the signer offers one. Only `did:aqua`
+    //    does: its verifier can obtain the key neither from the DID (a
+    //    SHA3-256 commitment) nor from the signature (ML-DSA has no
+    //    recovery). Classical signers return None and the field is omitted,
+    //    so their request bytes are unchanged.
     Ok(SessionRequest {
         did: did.to_string(),
         nonce: envelope.nonce,
         signature: format!("0x{}", hex::encode(sig_bytes)),
+        public_key: signer
+            .public_key()
+            .map(|pk| format!("0x{}", hex::encode(pk))),
     })
 }
 

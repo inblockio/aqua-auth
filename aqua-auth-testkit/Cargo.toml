@@ -13,7 +13,7 @@ publish = false
 # and `http-sig` (verify_request); the `client` feature is added only by the
 # dev-dependencies below, so downstream consumers of the testkit do not pull
 # reqwest unless they ask for it.
-aqua-auth = { path = "..", features = ["http", "http-sig"] }
+aqua-auth = { path = "..", features = ["http", "http-sig", "did-aqua"] }
 aqua-auth-directory = { path = "../aqua-auth-directory" }
 async-trait = "0.1"
 axum = "0.8"
@@ -24,6 +24,9 @@ bs58 = "0.5"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex = "0.4"
 k256 = { version = "0.13", features = ["ecdsa"] }
+# Same version aqua-auth and aqua-rs-sdk pin, so the testkit signer and the
+# verifier can never disagree about what a valid ML-DSA-87 signature is.
+ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
 rand = "0.8"
 sha3 = "0.10"

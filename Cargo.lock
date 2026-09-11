@@ -110,6 +110,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256",
+ "ml-dsa",
  "p256",
  "rand 0.8.8",
  "reqwest",

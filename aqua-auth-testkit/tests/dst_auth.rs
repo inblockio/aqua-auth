@@ -358,6 +358,9 @@ async fn sign_challenge(
         did: signer.signer_did().to_string(),
         nonce: envelope.nonce,
         signature: hex::encode(signature),
+        // None for every signer this suite drives; did:aqua is exercised in
+        // the e2e suites rather than under the deterministic simulator.
+        public_key: signer.public_key().map(hex::encode),
     })
 }
 

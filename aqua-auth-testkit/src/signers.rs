@@ -181,3 +181,62 @@ pub fn p256_did_pkh() -> Arc<dyn Signer> {
 pub fn eip155() -> Arc<dyn Signer> {
     Arc::new(Eip155Local::generate())
 }
+
+/// ML-DSA-87 under the `did:aqua` content-addressed spelling (PCA-0017).
+///
+/// The sixth spelling, and the only one whose verifier needs the public key
+/// supplied alongside the signature: `did:aqua` commits to the key by
+/// SHA3-256 and ML-DSA has no public-key recovery, so the key travels on the
+/// wire and is bound back to the DID at verification.
+pub struct MlDsa87Local {
+    key: ml_dsa::SigningKey<ml_dsa::MlDsa87>,
+    public_key: Vec<u8>,
+    did: String,
+}
+
+impl MlDsa87Local {
+    /// Generate a fresh ML-DSA-87 key and derive its `did:aqua` identity.
+    pub fn generate() -> Self {
+        use ml_dsa::KeyInit;
+        let mut seed = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut seed);
+        let key = ml_dsa::SigningKey::<ml_dsa::MlDsa87>::new(&seed.into());
+        let public_key = ml_dsa::Keypair::verifying_key(&key)
+            .encode()
+            .as_slice()
+            .to_vec();
+        let did = aqua_auth::aqua_did_from_pubkey(&public_key);
+        Self {
+            key,
+            public_key,
+            did,
+        }
+    }
+}
+
+#[async_trait]
+impl Signer for MlDsa87Local {
+    fn signer_did(&self) -> &str {
+        &self.did
+    }
+
+    async fn sign(&self, message: &str) -> Result<Vec<u8>, SignError> {
+        use ml_dsa::signature::Signer as _;
+        Ok(self
+            .key
+            .sign(message.as_bytes())
+            .encode()
+            .as_slice()
+            .to_vec())
+    }
+
+    /// The one signer that answers this: see the trait docs.
+    fn public_key(&self) -> Option<Vec<u8>> {
+        Some(self.public_key.clone())
+    }
+}
+
+/// A fresh ML-DSA-87 key spelled `did:aqua:z...`.
+pub fn did_aqua() -> Arc<dyn Signer> {
+    Arc::new(MlDsa87Local::generate())
+}

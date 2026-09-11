@@ -178,6 +178,19 @@ async fn real_client_logs_in_as_eip155() {
     assert_real_client_logs_in(signers::eip155()).await;
 }
 
+/// The post-quantum namespace over the same shipped client path.
+///
+/// This is the only spelling whose login carries a public key, because
+/// `did:aqua` commits to an ML-DSA-87 key by SHA3-256 and the scheme has no
+/// public-key recovery: the verifier can reach the key neither through the
+/// DID nor through the signature. Proving it here rather than only in unit
+/// tests is the point, since the key has to survive the real client, real
+/// JSON, and a real socket to be worth anything.
+#[tokio::test]
+async fn real_client_logs_in_as_did_aqua() {
+    assert_real_client_logs_in(signers::did_aqua()).await;
+}
+
 // ── HB2: the relay is refused before the key is touched ─────────────────
 
 /// A [`Signer`] that delegates to a real one and counts how often the key was
@@ -428,13 +441,10 @@ async fn hb3_a_forgotten_session_is_re_established_transparently() {
     let (peer, base_url, server) =
         AquaPeer::bind_loopback("node", CHALLENGE_TTL_SECS, peer_key).await;
 
-    let mut session = aqua_auth::client::AuthSession::login(
-        reqwest::Client::new(),
-        &base_url,
-        &client,
-    )
-    .await
-    .expect("the initial login must succeed");
+    let mut session =
+        aqua_auth::client::AuthSession::login(reqwest::Client::new(), &base_url, &client)
+            .await
+            .expect("the initial login must succeed");
 
     let logins_after_first = client.calls();
     assert_eq!(logins_after_first, 1, "login signs exactly once");
@@ -488,13 +498,10 @@ async fn a_persistent_401_is_returned_after_exactly_one_retry() {
     let (_peer, base_url, server) =
         AquaPeer::bind_loopback("node", CHALLENGE_TTL_SECS, peer_key).await;
 
-    let mut session = aqua_auth::client::AuthSession::login(
-        reqwest::Client::new(),
-        &base_url,
-        &client,
-    )
-    .await
-    .expect("the initial login must succeed");
+    let mut session =
+        aqua_auth::client::AuthSession::login(reqwest::Client::new(), &base_url, &client)
+            .await
+            .expect("the initial login must succeed");
 
     // A token this server will never accept, presented on every attempt.
     let resp = session

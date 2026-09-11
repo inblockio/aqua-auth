@@ -28,11 +28,26 @@ pub struct ChallengeEnvelope {
 }
 
 /// Client -> server body for `POST /auth/session`.
+///
+/// `public_key` is the `did:aqua` transport and is absent for every other
+/// namespace. Optional and skipped when `None`, so the shape a classical
+/// client sends is byte-identical to what it sent before this field existed,
+/// and a server that does not know the field ignores it per `SPEC.md`
+/// Section 8's forward-compatibility rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRequest {
     pub did: String,
     pub nonce: String,
     pub signature: String,
+    /// Hex-encoded raw public key, `0x` prefixed, for methods whose verifier
+    /// can obtain it neither from the DID nor from the signature. Today that
+    /// is `did:aqua` alone: a 2592-byte ML-DSA-87 key, so 5186 characters.
+    ///
+    /// The server MUST bind this back to the DID before trusting it (see
+    /// `aqua::codec::aqua_did_binds_pubkey`). An unbound key proves
+    /// possession of some identity, not of the one being claimed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
 }
 
 /// Server -> client response body for `POST /auth/session`.
@@ -68,12 +83,46 @@ mod tests {
             did: "did:pkh:eip155:1:0xABCD".into(),
             nonce: "0xdeadbeef".into(),
             signature: "0xsig".into(),
+            public_key: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let decoded: SessionRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.did, req.did);
         assert_eq!(decoded.nonce, req.nonce);
         assert_eq!(decoded.signature, req.signature);
+        assert_eq!(decoded.public_key, None);
+    }
+
+    /// A classical request serializes to exactly the bytes it did before
+    /// `public_key` existed. This is what makes the field a non-breaking
+    /// addition rather than a wire change every consumer has to absorb.
+    #[test]
+    fn a_classical_request_omits_the_public_key_field_entirely() {
+        let req = SessionRequest {
+            did: "did:pkh:eip155:1:0xABCD".into(),
+            nonce: "0xdeadbeef".into(),
+            signature: "0xsig".into(),
+            public_key: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("public_key"), "got: {json}");
+        assert_eq!(
+            json,
+            r#"{"did":"did:pkh:eip155:1:0xABCD","nonce":"0xdeadbeef","signature":"0xsig"}"#
+        );
+    }
+
+    /// A server built before this field existed still parses a request that
+    /// carries it, and a server built after still parses one that does not.
+    #[test]
+    fn the_public_key_field_is_optional_in_both_directions() {
+        let without = r#"{"did":"d","nonce":"n","signature":"s"}"#;
+        let parsed: SessionRequest = serde_json::from_str(without).unwrap();
+        assert_eq!(parsed.public_key, None);
+
+        let with = r#"{"did":"d","nonce":"n","signature":"s","public_key":"0xab"}"#;
+        let parsed: SessionRequest = serde_json::from_str(with).unwrap();
+        assert_eq!(parsed.public_key.as_deref(), Some("0xab"));
     }
 
     #[test]
