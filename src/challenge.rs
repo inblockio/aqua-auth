@@ -77,7 +77,26 @@ impl ChallengeStore {
     /// full, the single oldest-issued challenge is evicted to make room (see
     /// the module docs). This method never grows the store past
     /// `max_challenges`.
+    ///
+    /// ## Rule 5 is checked before any state is created
+    ///
+    /// `did` must satisfy SPEC section 7 rules 4 and 5
+    /// ([`crate::validate_did_well_formed`]) or this returns
+    /// [`AuthError::Crypto`] having touched nothing: no nonce drawn, no entry
+    /// inserted, no capacity pressure applied. Without that check the store
+    /// would mint and hold a challenge for an identity that cannot be
+    /// represented, let alone authenticate, for the full TTL, and the caller
+    /// would only discover this a round trip later at `POST /auth/session`,
+    /// as a signature failure rather than as the malformed DID it is.
+    ///
+    /// Five of the seven malformed shapes SPEC section 7 rule 5 names reached
+    /// this method and were served before 2026-09-11; see `src/did_format.rs`
+    /// for the measurement and for why the other two were already refused.
+    /// `build_message` still performs its own registry lookup underneath this
+    /// one, deliberately: the layers multiply rather than move.
     pub fn create(&self, did: &str) -> Result<Challenge, AuthError> {
+        crate::validate_did_well_formed(did)?;
+
         if self.challenges.len() >= self.max_challenges {
             self.cleanup_expired();
             if self.challenges.len() >= self.max_challenges {

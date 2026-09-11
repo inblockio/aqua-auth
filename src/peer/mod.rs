@@ -15,7 +15,10 @@ use crate::{
 pub struct PeerMethod;
 
 /// Extract the base58btc body (without leading `z`) of the verification key from a did:peer.
-fn extract_z_body(did: &str) -> Result<String, CryptoError> {
+///
+/// `pub(crate)` so `did_format` can reach the same extraction the verifier uses,
+/// rather than writing a second one that could disagree with it.
+pub(crate) fn extract_z_body(did: &str) -> Result<String, CryptoError> {
     let body = did
         .strip_prefix("did:peer:")
         .ok_or_else(|| CryptoError::InvalidDid(did.to_string()))?;
