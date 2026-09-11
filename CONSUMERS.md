@@ -29,8 +29,12 @@ So:
    A dependency graph containing both gets two copies of this crate at the same
    commit with their features **unmerged**, which surfaces as missing items
    behind `#[cfg(feature = ...)]` rather than as a version conflict. The repo
-   is still named `aqua-rs-auth`; `aqua-auth` is only a GitHub rename redirect,
-   so spelling the URL the new way also forks the source.
+   is named `aqua-auth`; `aqua-rs-auth` is the old name and now only a GitHub
+   redirect (verified 2026-09-11: it answers `301` to `.../aqua-auth`). Every
+   consumer below still pins the `aqua-rs-auth` spelling, which keeps working
+   through the redirect, so do **not** modernise one repo's URL on its own --
+   switching spellings forks the cargo source exactly as above. Move them all
+   in one batch or leave them all alone.
 3. **Declare every feature you use.** Cargo unions features across a dependency
    graph, so a crate can compile against a feature a *sibling* declared. That
    compiles today and breaks the moment the sibling drops the feature. See

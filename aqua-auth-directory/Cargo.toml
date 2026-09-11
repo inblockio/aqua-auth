@@ -3,7 +3,7 @@ name = "aqua-auth-directory"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/inblockio/aqua-rs-auth"
+repository = "https://github.com/inblockio/aqua-auth"
 description = "Public-key advertisement for Aqua services: a JWKS directory per draft-meunier-webbotauth-httpsig-directory plus an Aqua-native identity document. Public keys only, never custody."
 
 [dependencies]

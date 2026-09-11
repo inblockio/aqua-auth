@@ -4,7 +4,7 @@ version = "0.7.0"
 edition = "2021"
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/inblockio/aqua-rs-auth"
+repository = "https://github.com/inblockio/aqua-auth"
 description = "DID-based authentication for the Aqua Protocol. Crypto/DID primitives by default; challenge-response sessions behind the `http` feature."
 
 [features]
