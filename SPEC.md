@@ -79,11 +79,32 @@ form. The namespace/curve determines which signature algorithm applies.
 
 **`eip155` DID parsing** (see `src/did.rs`):
 
-- Expected exact form: `did:pkh:eip155:1:0x{40 hex chars}`.
-- The chain ID segment is currently fixed to `1` by the parser. DIDs with
-  other chain IDs are not accepted by `address_from_did()`.
+- Expected form: `did:pkh:eip155:{chain_id}:0x{40 hex chars}`.
+- **Any chain ID is accepted.** `address_from_did()` strips the
+  `did:pkh:eip155:` prefix and takes the LAST colon-separated segment as the
+  address. It never reads or validates the chain, so
+  `did:pkh:eip155:137:0x...` parses exactly as `did:pkh:eip155:1:0x...` does.
+- **Verification ignores the chain; identity does not.** The chain never
+  reaches the signature check, because the key is the same secp256k1 key on
+  every chain. But `PkhMethod::canonical_subject` returns the full DID string
+  and `canonical_trust_key` keys on it, so `did:pkh:eip155:1:0xAb...` and
+  `did:pkh:eip155:137:0xAb...` are **distinct principals with separate grant
+  buckets**, exactly as the two-spellings rule above works for ed25519 and
+  P-256. One signature can authenticate either; which one it authenticates is
+  decided by the DID the client presented, not by the signature.
+- The `Chain ID:` line in the message carries the chain from the DID
+  (`PkhMethod::chain_id`), not a constant.
 - The address embedded in the DID is the EIP-55 checksummed form of the
   20-byte Ethereum address.
+
+> **Corrected 2026-09-11.** This subsection previously said the chain ID "is
+> currently fixed to `1` by the parser" and that DIDs with other chain IDs
+> "are not accepted by `address_from_did()`". Both were false, and
+> `did::tests::address_from_did_any_chain` has asserted the opposite for as
+> long as it has existed. A second implementor following the old text would
+> have rejected DIDs the reference accepts, which is an interop divergence
+> rather than a documentation nit. Section 4.1's template was corrected in the
+> same pass for the same reason.
 
 **`ed25519` DID parsing:**
 
@@ -117,10 +138,11 @@ Issued At: {issued_at}
 Expiration Time: {expiration_time}
 ```
 
-For `eip155` only, one additional line is appended:
+For `eip155` only, one additional line is appended, carrying the chain ID
+parsed out of the signer's DID:
 
 ```
-Chain ID: 1
+Chain ID: {chain_id}
 ```
 
 ### 4.2 Field Definitions
@@ -134,6 +156,7 @@ Chain ID: 1
 | `{nonce}` | `0x` followed by 64 lowercase hex characters (32 random bytes) |
 | `{issued_at}` | UTC timestamp formatted as `%Y-%m-%dT%H:%M:%S%.3fZ` (millisecond precision, zero-padded) |
 | `{expiration_time}` | Same format as `{issued_at}` |
+| `{chain_id}` | `eip155` only. The chain segment of the signer's DID, verbatim. Not validated and not constrained to `1`; see section 3 |
 
 Datetime format example: `2026-05-17T12:00:00.000Z`.
 
