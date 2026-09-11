@@ -35,9 +35,20 @@ tokio = { version = "1", features = ["rt", "net", "time", "macros"] }
 # The e2e suites live here so aqua-auth's own feature-lane matrix stays
 # untouched: this crate always has the features its tests need, so no suite
 # can silently compile to zero tests under the wrong flags again.
-aqua-auth = { path = "..", features = ["client"] }
+#
+# `ceremony` is added here (not to core aqua-auth's dev-deps) so the software
+# authenticator below stays OUT of the crates.io-bound core crate's dependency
+# graph: the ceremony round-trip suite is the natural home for it.
+aqua-auth = { path = "..", features = ["client", "ceremony"] }
 chrono = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tower = { version = "0.5", features = ["util"] }
 turmoil = "0.7"
 tokio = { version = "1", features = ["full"] }
+# Software authenticator for the ceremony round-trip. Pinned to the EXACT same
+# `=0.6.1-dev` as aqua-auth's `webauthn-rs`: it is built on the very same
+# `webauthn-rs-proto`/`webauthn-rs-core` 0.6.1-dev, so its synthesized
+# attestation/assertion (`SoftPasskey`) are the identical proto types the spine
+# verifies — a mismatched version would not interop. Testkit only (publish =
+# false), so this never touches core aqua-auth's semver-sensitive graph.
+webauthn-authenticator-rs = { version = "=0.6.1-dev", features = ["softpasskey"] }
