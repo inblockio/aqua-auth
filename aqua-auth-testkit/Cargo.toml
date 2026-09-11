@@ -33,6 +33,20 @@ sha3 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "net", "time", "macros"] }
+# Optional: only pulled in by the `conformance` feature (default-on). The
+# `conformance` module drives an arbitrary base URL over real HTTP, so it
+# needs a client and URL parsing as normal (non-dev) dependencies; a consumer
+# who wants only the signers can opt out with `default-features = false`.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+url = { version = "2", optional = true }
+
+[features]
+default = ["conformance"]
+# The base-URL conformance suite. Default-on so `cargo test -p aqua-auth-testkit`
+# always compiles it: a suite that silently compiles to zero tests under the
+# wrong flags is the failure this crate's manifest already warns about. A
+# consumer that wants only the signers can take `default-features = false`.
+conformance = ["dep:reqwest", "dep:url"]
 
 [dev-dependencies]
 # The e2e suites live here so aqua-auth's own feature-lane matrix stays

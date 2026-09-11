@@ -22,6 +22,8 @@
 //! `tests/` so they always compile with the features they need; aqua-auth's
 //! own feature-lane matrix is unaffected by this crate.
 
+#[cfg(feature = "conformance")]
+pub mod conformance;
 pub mod signers;
 
 use aqua_auth::http_sig::{NonceReplayGuard, RequestParts, VerifyOptions};
