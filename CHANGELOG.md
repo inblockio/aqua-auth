@@ -6,6 +6,26 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-11
+
+What a consumer had to write for itself, and a way to tell whether a server is
+right. Three surfaces that every consumer was reimplementing downstream now ship
+here: `did:key` encoders, a local-key `Signer` over PKCS#8 PEM, and a session
+that re-authenticates itself on 401. `aqua-agents` had built all three by hand,
+plus a CAIP-122 login that skips the challenge binding checks, which is what
+prompted the review.
+
+Alongside them, the first post-quantum namespace (`did:aqua`, ML-DSA-87, behind
+a feature and verification only), `authenticate()` promoted to the contract, the
+client binding checks specified for the first time, and a conformance suite that
+judges a server instead of this crate.
+
+**Nothing here breaks the wire.** The minor bump is carried by the
+`verify_caip122` deprecation and the new surfaces. One commit on the way here
+(`1ef890f`) is marked `!` for a breaking change that the next commit
+(`cf07f72`) reverts; a release-notes generator reading conventional commits will
+claim a break that does not exist.
+
 ### Changed
 
 - **`wire::ChallengeEnvelope` does not carry `did`**, and tolerates servers

@@ -9,6 +9,16 @@ no users, and the head with all the users had no tests.
 Last verified: **2026-09-11**, against `aqua-auth` 0.7.0 (`v0.7.0` / `CheckPoint.20260911`,
 both tags on commit `97f69c3`).
 
+> **0.8.0 is on `main` and no consumer has moved.** The version bumped on
+> 2026-09-11 (merge `0271aaf`); the table below is still accurate, and every row
+> in it is now one minor version behind. **No tag has been cut**, deliberately,
+> because rule 1 says a tag drags all five consumers in one batch and that batch
+> has not been scheduled. Nothing breaks in the meantime: 0.8.0 breaks no wire
+> contract and its one deprecation is a warning, not a removal. Two consumers
+> also have companion PRs that should land with the bump, `inblockio/aqua-node`
+> #41 and #42 and `inblockio/aquafier-rs` #192 and #193; #41 and #192 are hard
+> prerequisites for `did:aqua`, the other two are same-batch correctness fixes.
+
 ## The rule: all consumers move together
 
 This crate is semver-bound and headed for crates.io, but today every consumer
