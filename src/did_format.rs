@@ -279,7 +279,10 @@ mod tests {
                 "eip155 did:pkh",
                 format!("did:pkh:eip155:1:0x{}", hex::encode([0x42u8; 20])),
             ),
-            ("ed25519 did:peer variant 0", format!("did:peer:0z{peer_body}")),
+            (
+                "ed25519 did:peer variant 0",
+                format!("did:peer:0z{peer_body}"),
+            ),
         ]
     }
 
@@ -299,8 +302,9 @@ mod tests {
     #[test]
     fn every_valid_spelling_is_accepted() {
         for (label, did) in valid_spellings() {
-            validate_did_well_formed(&did)
-                .unwrap_or_else(|e| panic!("rule 5 wrongly refused the valid {label} {did:?}: {e}"));
+            validate_did_well_formed(&did).unwrap_or_else(|e| {
+                panic!("rule 5 wrongly refused the valid {label} {did:?}: {e}")
+            });
         }
     }
 

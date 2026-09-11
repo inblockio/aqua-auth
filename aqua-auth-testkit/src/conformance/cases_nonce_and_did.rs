@@ -362,9 +362,9 @@ pub(crate) async fn spec_7_4_unsupported_namespace_refused(
 /// versus session time, both as a count and per shape. [`refused_at_either_endpoint`]
 /// already carries this in its `Ok` string (`"refused at challenge time: ..."` or
 /// `"challenge accepted (...) but session was refused: ..."`); this case only
-/// has to keep it instead of discarding it. Against a server this suite has
-/// source access to, that distinction is a curiosity: `aqua-auth`'s own history
-/// is the proof. Before 2026-09-11, five of these seven shapes reached
+/// has to keep it instead of discarding it. The distinction is not cosmetic,
+/// and `aqua-auth`'s own history is the proof. Before 2026-09-11, five of
+/// these seven shapes reached
 /// `ChallengeStore::create` and were only ever refused inside
 /// `authenticate_with_public_key`'s signature-verification path, at session
 /// time, purely because a display helper happened to parse the identifier on
@@ -427,7 +427,7 @@ pub(crate) async fn spec_7_5_did_well_formed(target: &Target, http: &Http) -> Ca
     if violations.is_empty() {
         // `refused_at_either_endpoint` only ever produces one of these two
         // prefixes on `Ok` (see its doc comment), so this is a classification
-        // of the text it already returns, not a second definition of where
+        // of the text it already returns, not a second definition of what
         // "challenge time" and "session time" mean.
         let at_challenge = refusals
             .iter()
