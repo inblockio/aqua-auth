@@ -357,6 +357,22 @@ pub(crate) async fn spec_7_4_unsupported_namespace_refused(
 /// was refused, otherwise Fail naming exactly which ones were not, since
 /// "DID validation is loose" is not actionable and "it accepted a 31-byte
 /// ed25519 key" is.
+///
+/// The Pass detail also reports WHERE each shape was refused, challenge time
+/// versus session time, both as a count and per shape. [`refused_at_either_endpoint`]
+/// already carries this in its `Ok` string (`"refused at challenge time: ..."` or
+/// `"challenge accepted (...) but session was refused: ..."`); this case only
+/// has to keep it instead of discarding it. The distinction is not cosmetic,
+/// and `aqua-auth`'s own history is the proof. Before 2026-09-11, five of
+/// these seven shapes reached
+/// `ChallengeStore::create` and were only ever refused inside
+/// `authenticate_with_public_key`'s signature-verification path, at session
+/// time, purely because a display helper happened to parse the identifier on
+/// the way past (`src/did_format.rs:9-26`). Against a third-party server this
+/// suite has no source for, the per-shape location is the only way an
+/// operator learns whether rule 5 is its own enforcement layer or a side
+/// effect of something else, which is exactly the distinction that let the
+/// finding above go unnoticed until someone went looking.
 pub(crate) async fn spec_7_5_did_well_formed(target: &Target, http: &Http) -> CaseResult {
     const ID: &str = "spec_7_5_did_well_formed";
     const SPEC_REF: &str = "SPEC 7 rule 5, SPEC 3";
@@ -398,18 +414,40 @@ pub(crate) async fn spec_7_5_did_well_formed(target: &Target, http: &Http) -> Ca
     ];
 
     let mut violations = Vec::new();
+    let mut refusals: Vec<(&str, String)> = Vec::new();
     for (label, did) in &table {
-        if let Err(what_was_accepted) = refused_at_either_endpoint(http, target, did).await {
-            violations.push(format!("{label} ({did:?}): {what_was_accepted}"));
+        match refused_at_either_endpoint(http, target, did).await {
+            Ok(where_refused) => refusals.push((label, where_refused)),
+            Err(what_was_accepted) => {
+                violations.push(format!("{label} ({did:?}): {what_was_accepted}"));
+            }
         }
     }
 
     if violations.is_empty() {
+        // `refused_at_either_endpoint` only ever produces one of these two
+        // prefixes on `Ok` (see its doc comment), so this is a classification
+        // of the text it already returns, not a second definition of what
+        // "challenge time" and "session time" mean.
+        let at_challenge = refusals
+            .iter()
+            .filter(|(_, where_refused)| where_refused.starts_with("refused at challenge time"))
+            .count();
+        let at_session = refusals.len() - at_challenge;
+        let per_shape = refusals
+            .iter()
+            .map(|(label, where_refused)| format!("{label}: {where_refused}"))
+            .collect::<Vec<_>>()
+            .join("; ");
         CaseResult::pass(
             ID,
             SPEC_REF,
             TITLE,
-            format!("all {} malformed DID shapes were refused", table.len()),
+            format!(
+                "all {} malformed DID shapes were refused ({at_challenge} at challenge, \
+                 {at_session} at session): {per_shape}",
+                table.len(),
+            ),
         )
     } else {
         CaseResult::fail(

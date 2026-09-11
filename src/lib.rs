@@ -26,6 +26,7 @@
 pub mod cipher_suite;
 pub mod crypto_error;
 pub mod did;
+pub mod did_format;
 pub mod did_method;
 pub mod key;
 pub mod peer;
@@ -40,6 +41,7 @@ pub use did::{
     eip55_checksum, identifier_from_did, identifier_from_message, p256_did_key_from_pubkey,
     parse_did_namespace, pubkey_from_ed25519_did, pubkey_from_p256_did,
 };
+pub use did_format::validate_did_well_formed;
 pub use did_method::{all_did_methods, find_did_method, DIDMethod};
 pub use key::{ed25519_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite};
 pub use peer::PeerMethod;

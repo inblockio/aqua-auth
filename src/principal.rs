@@ -39,10 +39,23 @@ impl Principal {
     ///
     /// Use only where the DID is already trusted, e.g. re-hydrating a
     /// `Principal` from an aqua-node-owned session record. Fails with
-    /// [`CryptoError::UnsupportedMethod`] if no `DIDMethod` recognises it, so an
-    /// unknown or malformed method cannot become a `Principal`.
+    /// [`CryptoError::UnsupportedMethod`] if no `DIDMethod` recognises the
+    /// method (SPEC section 7 rule 4), and with [`CryptoError::InvalidDid`] or
+    /// [`CryptoError::HexDecode`] if the identifier is the wrong shape for that
+    /// namespace (rule 5), so neither an unknown method nor a malformed
+    /// identifier can become a `Principal`.
+    ///
+    /// **Rule 5 is checked here as of 0.8.0.** This is the one path into a
+    /// `Principal` that verifies nothing, so before
+    /// [`crate::validate_did_well_formed`] existed it was also the one place
+    /// where the rule had no enforcement at all: the method was checked, the
+    /// identifier was not, and `did:pkh:ed25519:0xdeadbeef` became a
+    /// `Principal`. Tightening it cannot invalidate a session that was ever
+    /// legitimately issued, because a DID this now refuses could never have
+    /// produced a verifying signature in the first place; a stored record
+    /// holding one was already unusable.
     pub fn from_trusted_did(did: &str) -> Result<Self, CryptoError> {
-        find_did_method(did).ok_or_else(|| CryptoError::UnsupportedMethod(did.to_string()))?;
+        crate::validate_did_well_formed(did)?;
         Ok(Self {
             did: did.to_string(),
         })
@@ -97,12 +110,30 @@ pub fn authenticate(did: &str, message: &str, signature: &[u8]) -> Result<Princi
 /// step, binding the supplied key back to the DID's hash commitment before
 /// the signature is checked at all, so a `Principal` can never be minted for
 /// an identity whose key the caller did not actually hold.
+///
+/// # SPEC section 7 rule 5 is enforced here in its own right
+///
+/// [`crate::validate_did_well_formed`] runs before verification is attempted,
+/// rather than rule 5 being left to whichever parser the verifier happens to
+/// reach first. The verifiers underneath still perform their own checks and
+/// are unchanged; this is a second layer, not a relocation. The practical
+/// difference is that removing, stubbing or short-circuiting the verification
+/// path no longer removes rule 5 along with it, which is exactly what the
+/// negative control `nc4_skipped_verification_fails_both_signature_cases_and_its_cascade`
+/// demonstrated on 2026-09-11.
+///
+/// For every classical namespace the observable error is unchanged, because
+/// the early check calls the same parser the verifier called. The one
+/// improvement is `did:aqua`: a malformed `did:aqua` used to report the
+/// missing public key first, and now reports the malformed DID.
 pub fn authenticate_with_public_key(
     did: &str,
     message: &str,
     signature: &[u8],
     public_key: Option<&[u8]>,
 ) -> Result<Principal, CryptoError> {
+    crate::validate_did_well_formed(did)?;
+
     if crate::verify_caip122_with_public_key(did, message, signature, public_key)? {
         Principal::from_trusted_did(did)
     } else {

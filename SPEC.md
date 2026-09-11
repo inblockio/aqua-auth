@@ -523,10 +523,22 @@ a `POST /auth/session` request:
    message that was signed. (Enforced implicitly: the server signs the message
    it built and verifies against the same message.)
 
-The reference implementation enforces rules 1-3 in `src/challenge.rs` and
-rules 4-6 in `src/lib.rs` via `verify_caip122()`. Rule 7 holds by construction
-because the client is given the exact message to sign in the challenge response
-and the server verifies against the stored copy.
+The reference implementation enforces rules 1-3 in `src/challenge.rs`. Rule 4
+(namespace supported) is enforced by the `DIDMethod` registry lookup
+(`find_did_method`), consulted by every verification path. Rules 4 and 5 (DID
+well-formed) are additionally enforced by `validate_did_well_formed()`
+(`src/did_format.rs`), called at three independent points:
+`ChallengeStore::create`, `authenticate_with_public_key` and
+`Principal::from_trusted_did`. Rule 6 (signature valid) is enforced by the
+per-method verifiers, invoked from `src/lib.rs` via `verify_caip122()`; those
+verifiers also perform their own DID parsing as their first step, so rule 5 is
+checked in depth rather than in one place. Rule 7 holds by construction
+because the client is given the exact message to sign in the challenge
+response and the server verifies against the stored copy.
+
+Rule 5's enforcement is independent of the verification path:
+`validate_did_well_formed()` runs whether or not rule 6 is ever reached, so a
+bypass or rewrite of verification no longer takes rule 5 down with it.
 
 ---
 

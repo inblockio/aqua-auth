@@ -663,18 +663,36 @@ async fn nc3_millisecond_expires_at_fails_expires_at_sane_only() {
 /// only the two named cases, precisely so a narrower, wrong failure set would
 /// be caught as a finding rather than silently accepted.
 ///
-/// One more case joins that cascade for a reason worth recording rather than
-/// papering over: `spec_7_5_did_well_formed` (SPEC 7 rule 5) ALSO fails
-/// here, empirically, not by prediction. 5 of its 7 malformed-DID shapes are
-/// accepted by the real, conformant `AquaPeer` handlers this crate ships
+/// `spec_7_5_did_well_formed` (SPEC 7 rule 5) is deliberately ABSENT from
+/// that cascade, and its absence is itself the regression test for a finding
+/// this negative control surfaced and `aqua-auth` has since fixed.
+///
+/// Confirmed empirically on 2026-09-11: before that date, this case DID join
+/// the cascade. 5 of its 7 malformed-DID shapes were accepted by the real,
+/// conformant `AquaPeer` handlers this crate ships
 /// (`suite_is_green_against_the_reference_router` proves `AquaPeer` itself
-/// passes rule 5), which means `AquaPeer` is refusing most of those shapes
-/// at SESSION time, inside `authenticate_with_public_key` noticing the
-/// malformed identifier while verifying, not at challenge time. Skip
-/// verification entirely, as this server does, and that protection goes
-/// with it. This is a real finding about where `AquaPeer`'s own DID
-/// validation actually lives, surfaced only because this negative control
-/// exists.
+/// passes rule 5 against a normal server), which meant `AquaPeer` was
+/// refusing most of those shapes at SESSION time only, inside
+/// `authenticate_with_public_key` noticing the malformed identifier while
+/// verifying a signature, never at challenge time. Skip verification
+/// entirely, as this server does, and that protection went with it: rule 5
+/// held only as a side effect of rule 6 running.
+///
+/// That gap is closed. `aqua-auth`'s `validate_did_well_formed`
+/// (`src/did_format.rs`) now enforces rule 5 at `ChallengeStore::create`
+/// itself, so `conformant_challenge_handler`, which this server's router
+/// still wires up unmodified for `GET /auth/challenge`
+/// (`nc4_router`, above), refuses all seven shapes before a nonce is ever
+/// minted, before `POST /auth/session` (this handler) is reachable at all.
+/// A total verification bypass here can no longer take rule 5 down with it,
+/// which is exactly the property `spec_7_5_did_well_formed` no longer
+/// appearing in `expected_cascade` demonstrates.
+///
+/// **If `spec_7_5_did_well_formed` ever reappears in `expected_cascade`,
+/// rule 5 has slid back into being a side effect of verification instead of
+/// its own enforcement layer**, and that regression is exactly what this
+/// test exists to catch. Treat a reappearance as the finding this rustdoc
+/// once described, not as a test needing its expectation updated.
 async fn nc4_session_handler(
     State(state): State<ConformantSessionState>,
     Json(request): Json<SessionRequest>,
@@ -731,7 +749,6 @@ async fn nc4_skipped_verification_fails_both_signature_cases_and_its_cascade() {
         "spec_6_3_public_key_binding",
         "spec_7_1_unknown_nonce_refused",
         "spec_7_3_nonce_single_use",
-        "spec_7_5_did_well_formed",
         "spec_7_6_signature_invalid_refused",
         "spec_7_6_wrong_key_refused",
         "spec_7_7_message_binding",
@@ -741,8 +758,8 @@ async fn nc4_skipped_verification_fails_both_signature_cases_and_its_cascade() {
         fails,
         expected_cascade,
         "the observed failing set for a total verification bypass must be exactly this cascade, \
-         no more and no less (spec_7_5_did_well_formed's presence here is itself a finding, see \
-         the rustdoc above):\n{}",
+         no more and no less (spec_7_5_did_well_formed's ABSENCE here is itself the regression \
+         test, see the rustdoc above):\n{}",
         report.render()
     );
 
