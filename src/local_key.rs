@@ -223,7 +223,11 @@ mod tests {
         let rendered = format!("{signer:?}");
         assert!(rendered.contains("<redacted>"));
         assert!(rendered.contains(signer.signer_did()));
-        for byte in signer_scalar_hex(&signer).chars().collect::<Vec<_>>().chunks(16) {
+        for byte in signer_scalar_hex(&signer)
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(16)
+        {
             let probe: String = byte.iter().collect();
             assert!(!rendered.contains(&probe), "key material leaked into Debug");
         }
