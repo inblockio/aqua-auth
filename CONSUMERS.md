@@ -7,17 +7,26 @@ two heads for six weeks without anyone noticing: the head with all the tests had
 no users, and the head with all the users had no tests.
 
 Last verified: **2026-09-11**, against `aqua-auth` 0.7.0 (`v0.7.0` / `CheckPoint.20260911`,
-both tags on commit `97f69c3`).
+both tags on commit `97f69c3`; `CheckPoint.*` tags are historical, see "Release tags").
 
 > **0.8.0 is on `main` and no consumer has moved.** The version bumped on
 > 2026-09-11 (merge `0271aaf`); the table below is still accurate, and every row
-> in it is now one minor version behind. **No tag has been cut**, deliberately,
+> in it is now one minor version behind. **No release tag has been cut**, deliberately,
 > because rule 1 says a tag drags all five consumers in one batch and that batch
 > has not been scheduled. Nothing breaks in the meantime: 0.8.0 breaks no wire
 > contract and its one deprecation is a warning, not a removal. Two consumers
 > also have companion PRs that should land with the bump, `inblockio/aqua-node`
 > #41 and #42 and `inblockio/aquafier-rs` #192 and #193; #41 and #192 are hard
 > prerequisites for `did:aqua`, the other two are same-batch correctness fixes.
+
+## Release tags
+
+Releases are annotated `vX.Y.Z` tags. The version is semver for the **crate API**
+and is separate from the wire/spec version; the tag message states the spec
+version. `CheckPoint.*` tags are historical: no new ones are created, and the
+existing ones are never moved or deleted, so consumers pinned to them stay valid
+until they move. `main` is at 0.8.0 and untagged; the next release tag will be
+`v0.8.0` (or higher) when it is cut.
 
 ## The rule: all consumers move together
 
@@ -29,7 +38,7 @@ multi-repo build.
 
 So:
 
-1. **Cut a tag, then move every pinned consumer to it in the same batch.** Do
+1. **Cut a `vX.Y.Z` release tag, then move every pinned consumer to it in the same batch.** Do
    not bump one repo and leave the rest. aqua-node and aquafier-rs in
    particular share a lockfile-adjacent build (aquafier-rs takes aqua-node
    crates as path dependencies); a mismatch there is a compile error, not a
