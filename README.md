@@ -61,7 +61,8 @@ Only the crypto/DID primitives are unconditionally compiled: the `CipherSuite` a
 | `http` | off | The session layer: CAIP-122 message construction, the on-wire JSON shapes, and the in-memory `ChallengeStore` / `SessionStore`. Pulls in `rand`, `serde_json`, `chrono`, `dashmap`, `tokio`, `tracing`. |
 | `client` | off | Implies `http`. `client::authenticate()`: the full challenge-response flow over `reqwest`, with pre-sign challenge binding checks. |
 | `http-sig` | off | **Experimental.** RFC 9421 request signatures: `sign_request` / `verify_request`, replay protection, two profiles (Aqua-internal and `web-bot-auth` interop). Pulls in `sfv`, `base64`, `rand`, `dashmap`. |
-| `webauthn` | off | Standalone P-256 WebAuthn assertion verifier. Pulls in `sha2`, `base64`, `serde_json`. Independent of `http`. |
+| `webauthn` | off | Passkeys without `webauthn-rs`: store-free P-256 passkey login (policy, verify and recover, candidate selection, DID hint cookie, create/request options, derived login challenge) and the legacy stored-key assertion verifier. Pulls in `sha2`, `base64`, `serde_json`, `ecdsa` (verifying), `url`, `rand`. Independent of `http`. |
+| `webauthn-testkit` | off | Implies `webauthn`. `SoftPasskey` / `AssertOpts`: a seeded software passkey for tests. Dev-dependencies only; its keys are public. |
 | `did-aqua` | off | The `did:aqua` post-quantum namespace: ML-DSA-87 (FIPS 204) login over a content-addressed identity (PCA-0017). Pulls in `ml-dsa`. The only gated namespace; see the note below. |
 
 Per-namespace gating is deliberately not offered for the three classical
@@ -200,9 +201,32 @@ let sessions = SessionStore::with_capacity(3600, /* max_sessions */ 4096, /* max
 
 Stores are in-memory by default. For multi-instance deployments, plug in your own store; verification (`verify_caip122`, `verify_request`) is independent of state, and per-request signatures remove the session store from pure service-to-service paths entirely.
 
-## WebAuthn assertion verification (`webauthn` feature)
+## Passkey login (`webauthn` feature)
 
-For login flows that authenticate a passkey rather than a raw DID signature: a standalone P-256 verifier (`verify_webauthn_assertion`, `WebAuthnAssertionParams`) with no `webauthn-rs` dependency. It checks the rpIdHash, the user-present flag, the origin, the expected challenge, and the P-256 signature over `authenticatorData || SHA-256(clientDataJSON)`. Independent of the `http` session layer.
+A P-256 passkey logs in as the `did:key:zDn...` of its own public key, at every service under the same RP ID, with no credential store and no `webauthn-rs`. The server recovers the two candidate keys from the assertion and picks the signer by the `aqua_did_hint` cookie, a principal it already knows, or a second assertion. Normative description: [`SPEC.md`](SPEC.md) section 12.
+
+```rust
+use aqua_auth::{
+    hints_from_cookie_header, request_options, verify_and_recover, AssertionPolicy,
+    ExpectedChallenge, Selection,
+};
+
+let policy = AssertionPolicy::builder()
+    .rp("inblock.io", &["https://app.inblock.io"])?
+    .build()?;                                      // user verification required by default
+let options = request_options("inblock.io", &challenge, &[]); // send options.public_key() to get()
+
+// On finish, with the browser's PublicKeyCredential.toJSON() as `assertion`:
+let recovered = verify_and_recover(&assertion, ExpectedChallenge::Exact(&challenge), &policy)?;
+match recovered.select(&hints_from_cookie_header(cookie_header), known) {
+    Selection::Selected { principal, .. } => { /* session for principal.did() */ }
+    Selection::NeedSecondAssertion(pending) => { /* keep `pending`, ask for get() on pending.credential_id() */ }
+}
+```
+
+Sign-up is options only (`creation_options`): a registration response proves nothing about who holds the key, so a principal only ever comes from a verified assertion. `derive_login_challenge` serves a front end logging into a backend that must not choose the signed bytes, with cross-language vectors in `tests/vectors/`. Tests use `SoftPasskey` (feature `webauthn-testkit`).
+
+The older stored-key verifier `verify_webauthn_assertion` stays as it was (it checks neither user verification nor `crossOrigin`); new code uses `verify_and_recover`.
 
 ## Wire contract
 

@@ -40,7 +40,12 @@ If aqua-rs-sdk adds a new signature scheme, this crate must add a corresponding 
 
 ### WebAuthn Assertion Verification (feature: `webauthn`)
 
-Standalone P-256 WebAuthn assertion verifier for login flows. Validates rpIdHash, UP flag, origin, challenge, and P-256 signature over `authenticatorData || SHA-256(clientDataJSON)`. No webauthn-rs dependency; uses only `sha2`, `base64`, `serde_json`.
+Two passkey verifiers, neither with a webauthn-rs dependency:
+
+- **Store-free passkey login (0.9.0, SPEC section 12).** `verify_and_recover` checks an assertion against an `AssertionPolicy` (RP IDs, origins, UV) and recovers the two candidate P-256 keys; `select` picks the signer by DID hint cookie, known principal, or a second assertion (`PendingRecovery`). The principal is the passkey's own `did:key:zDn...`. Sign-up is options only (`creation_options`): never mint a principal from a registration. `derive_login_challenge` binds a front end's login to the backend's origin (vectors in `tests/vectors/`).
+- **Legacy stored-key verifier.** `verify_webauthn_assertion` validates rpIdHash, UP flag, origin, challenge, and the P-256 signature against a stored key. Behaviour pinned (no UV or crossOrigin check); kept for siwx-oidc's legacy path.
+
+Tests build assertions with `SoftPasskey` (feature `webauthn-testkit`, also compiled into this crate's unit tests); do not hand-roll assertion builders.
 
 ### Module Layout
 
@@ -74,7 +79,16 @@ src/
   --- behind feature "client" ---
   client.rs           # authenticate(&dyn Signer) async client, URI-binding check
   --- behind feature "webauthn" ---
-  webauthn.rs         # verify_webauthn_assertion(), WebAuthnAssertionParams
+  webauthn.rs         # verify_webauthn_assertion(), WebAuthnAssertionParams,
+                      #   shared authenticatorData parsing + signed payload
+  webauthn_policy.rs  # AssertionPolicy (RP IDs, origins, require_uv)
+  webauthn_recover.rs # verify_and_recover(), AssertionJson, RecoveredAssertion
+  webauthn_select.rs  # DidHint, select(), PendingRecovery (candidate selection)
+  webauthn_hint.rs    # aqua_did_hint cookie: set, clear, parse
+  webauthn_options.rs # creation_options(), request_options() (plain serde)
+  login_challenge.rs  # derive_login_challenge() (tagged, origin-bound)
+  --- behind feature "webauthn-testkit" (implies "webauthn"; also cfg(test)) ---
+  webauthn_testkit.rs # SoftPasskey, AssertOpts (seeded software passkey)
   webauthn_store.rs   # WebauthnCredentialBackend (async trait),
                       #   StoredCredential, InMemoryWebauthnStore
   --- behind features "webauthn" + "redis" ---
@@ -150,7 +164,8 @@ build.
 - **aqua-node**: Primary server-side consumer
 - **aquafier-rs** (aqua-fire): Aquafier service
 - **aqua-state-viewer**: `client` feature
-- **siwx-oidc**: `webauthn` feature, unpinned
+- **siwx-oidc**: `webauthn`, `ceremony`, `redis`, pinned `v0.7.0`
+- **aqua-suite**: `webauthn` only (store-free passkey login), joins with 0.9.0
 - **Mobile apps**: Client-side auth via the `client` feature
 - **Web apps and CLIs**: Any client connecting to an aqua-node
 
@@ -172,12 +187,14 @@ Since this crate is headed for crates.io, the public API is subject to semver. B
 cargo build                       # Default features (crypto/DID + Signer trait)
 cargo build --features http       # Session/auth layer
 cargo build --features client     # HTTP client (implies http)
-cargo build --features webauthn   # WebAuthn assertion verifier
+cargo build --features webauthn   # passkey login (store-free) + legacy verifier
 cargo build --features ceremony   # register/login ceremony (implies webauthn)
 cargo build --features redis      # Redis credential store (implies webauthn)
 cargo build --features http-sig   # RFC 9421 request signatures (experimental)
 cargo test                        # Default-feature tests
-cargo test --all-features         # Everything (264 lib + integration)
+cargo test --features webauthn    # passkey unit tests (testkit compiled under cfg(test))
+cargo test --features webauthn,webauthn-testkit   # + derived-challenge and login-flow tests
+cargo test --all-features         # Everything (377 lib + integration + doc = 410, 0.9.0)
 cargo test -p aqua-auth-directory # The directory workspace member
 # E2E suites live in the testkit member (publish = false); no feature flags
 # needed, the testkit pins the features its suites require:
