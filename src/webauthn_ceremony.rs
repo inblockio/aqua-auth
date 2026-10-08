@@ -205,6 +205,12 @@ pub fn register_start(
 /// Output of `register_finish`: the credential to store + its bound DID.
 pub struct FinishedRegistration {
     pub credential: NewCredential,
+    /// The DID of the public key the attestation carried. Unproven: with
+    /// attestation `none` the client can send any public key, so nothing here
+    /// shows the caller holds its private key. Never mint a session or a
+    /// [`crate::Principal`] from it; a principal comes only from a verified
+    /// assertion (for example [`crate::verify_and_recover`] plus candidate
+    /// selection).
     pub did: String,
     pub credential_id_hex: String,
 }

@@ -42,6 +42,26 @@ impl DidHint {
         (p256_did_key_from_pubkey(&point) == s).then(|| DidHint(s.to_owned()))
     }
 
+    /// The hint for the key in a DER SubjectPublicKeyInfo, as
+    /// `AuthenticatorAttestationResponse.getPublicKey()` returns it after
+    /// `create()`. P-256 on the named curve only. The client supplies these
+    /// bytes, so the result is a selector like any other hint: it names the
+    /// account only if the following assertion recovers this key.
+    pub fn from_spki_der(spki: &[u8]) -> Result<DidHint, CryptoError> {
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        use p256::pkcs8::DecodePublicKey;
+
+        let key = p256::PublicKey::from_public_key_der(spki).map_err(|e| {
+            CryptoError::InvalidDid(format!("not a P-256 SubjectPublicKeyInfo: {e}"))
+        })?;
+        let point = key.to_encoded_point(true);
+        let compressed: &[u8; 33] = point
+            .as_bytes()
+            .try_into()
+            .expect("a compressed P-256 point is 33 bytes");
+        Ok(DidHint(p256_did_key_from_pubkey(compressed)))
+    }
+
     /// The `did:key` string.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -408,6 +428,48 @@ mod tests {
             "did:pkh:eip155:1:0x0000000000000000000000000000000000000000",
         ] {
             assert!(DidHint::parse(bad).is_none(), "{bad:?}");
+        }
+    }
+
+    /// A throwaway 1024-bit RSA SubjectPublicKeyInfo (openssl genpkey).
+    const RSA_SPKI_HEX: &str = "30819f300d06092a864886f70d010101050003818d0030818902818100e0b11e70af955e8d86153d92d001a0015695ad1476ba93fe72c0e47f642a16b90a8e24fa4e5f7e29ac270e6f2537ede2a5e63b7b67731cd95237ddc7a77fb5172ae095fe4839167468b2456c674598222cbf288b825043ee3ef18e9a453cd870e4b9f6b7ee56e69cc62a69d61d037dd2da3ba93e0303c5a6c2511c9c712ba5ad0203010001";
+
+    #[test]
+    fn did_hint_from_spki_der() {
+        use p256::pkcs8::EncodePublicKey;
+        use rand::{rngs::StdRng, SeedableRng};
+
+        let sk = key(33);
+        let spki = sk.verifying_key().to_public_key_der().unwrap();
+        let spki = spki.as_bytes();
+        // The uncompressed named-curve form `getPublicKey()` returns for ES256.
+        assert_eq!(spki.len(), 91);
+        let hint = DidHint::from_spki_der(spki).unwrap();
+        assert_eq!(hint.as_str(), did_of(&sk));
+        assert!(hint.as_str().starts_with("did:key:zDn"));
+
+        let secp256k1 = k256::ecdsa::SigningKey::random(&mut StdRng::seed_from_u64(1))
+            .verifying_key()
+            .to_public_key_der()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let mut ed25519 = hex::decode("302a300506032b6570032100").unwrap();
+        ed25519.extend_from_slice(&[7u8; 32]);
+        let mut trailing = spki.to_vec();
+        trailing.push(0);
+        let mut off_curve = spki.to_vec();
+        off_curve[90] ^= 1;
+        for (label, bytes) in [
+            ("RSA", hex::decode(RSA_SPKI_HEX).unwrap()),
+            ("secp256k1", secp256k1),
+            ("Ed25519", ed25519),
+            ("trailing byte", trailing),
+            ("truncated", spki[..90].to_vec()),
+            ("point off the curve", off_curve),
+            ("empty", Vec::new()),
+        ] {
+            assert!(DidHint::from_spki_der(&bytes).is_err(), "{label}");
         }
     }
 }

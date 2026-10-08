@@ -140,6 +140,12 @@ pub use webauthn_hint::{
     hint_clear_cookie, hint_set_cookie, hints_from_cookie_header, HintCookieConfig,
     HINT_COOKIE_NAME,
 };
+#[cfg(feature = "webauthn")]
+pub mod webauthn_options;
+#[cfg(feature = "webauthn")]
+pub use webauthn_options::{
+    creation_options, request_options, CreationOptionsJson, RequestOptionsJson, PASSKEY_USER_NAME,
+};
 
 // Credential store (the persistence half of passkey support). The trait +
 // in-memory backend need no `redis`; the Redis backend adds it.
