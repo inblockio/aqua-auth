@@ -131,6 +131,15 @@ pub use webauthn_recover::{
 };
 #[cfg(feature = "webauthn")]
 pub mod webauthn_select;
+#[cfg(feature = "webauthn")]
+pub use webauthn_select::{DidHint, PendingRecovery, SelectedBy, Selection, SelectionError};
+#[cfg(feature = "webauthn")]
+pub mod webauthn_hint;
+#[cfg(feature = "webauthn")]
+pub use webauthn_hint::{
+    hint_clear_cookie, hint_set_cookie, hints_from_cookie_header, HintCookieConfig,
+    HINT_COOKIE_NAME,
+};
 
 // Credential store (the persistence half of passkey support). The trait +
 // in-memory backend need no `redis`; the Redis backend adds it.
