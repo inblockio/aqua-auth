@@ -61,6 +61,18 @@ impl Principal {
         })
     }
 
+    /// A `Principal` for a P-256 `did:key` whose key has just been shown to
+    /// verify a signature the caller checked: one of the two keys a passkey
+    /// assertion recovers, picked by candidate selection
+    /// ([`crate::webauthn_select`]). Crate-private because that proof lives
+    /// in the caller, not in this function; `did` is the canonical encoding
+    /// of a recovered key, so it is well formed by construction.
+    #[cfg(feature = "webauthn")]
+    pub(crate) fn from_proven_did_key(did: String) -> Self {
+        debug_assert!(crate::key::p256_pubkey_from_did_key(&did).is_ok());
+        Self { did }
+    }
+
     /// The complete DID that signed: the identity of record.
     pub fn did(&self) -> &str {
         &self.did

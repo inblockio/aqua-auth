@@ -129,6 +129,8 @@ pub use webauthn_recover::{
     verify_and_recover, AssertionError, AssertionJson, AssertionResponseJson, ExpectedChallenge,
     RecoveredAssertion,
 };
+#[cfg(feature = "webauthn")]
+pub mod webauthn_select;
 
 // Credential store (the persistence half of passkey support). The trait +
 // in-memory backend need no `redis`; the Redis backend adds it.

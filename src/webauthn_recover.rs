@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// base64url, padding optional on input, none on output.
-const B64URL: GeneralPurpose = GeneralPurpose::new(
+pub(crate) const B64URL: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
     GeneralPurposeConfig::new()
         .with_encode_padding(false)
@@ -280,14 +280,91 @@ fn decode(member: &str, value: &str) -> Result<Vec<u8>, AssertionError> {
         .map_err(|e| AssertionError::Malformed(format!("{member}: {e}")))
 }
 
+/// Assertion builders shared by the unit tests of the store-free login
+/// modules. A local P-256 signer, not an authenticator model.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::{empty_object, AssertionJson, AssertionResponseJson};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+    use rand::{rngs::StdRng, SeedableRng};
+    use sha2::{Digest, Sha256};
+
+    pub(crate) fn b64(bytes: &[u8]) -> String {
+        URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    pub(crate) fn key(seed: u64) -> SigningKey {
+        SigningKey::random(&mut StdRng::seed_from_u64(seed))
+    }
+
+    pub(crate) fn auth_data(rp_id: &str, flags: u8) -> Vec<u8> {
+        let mut ad = Sha256::digest(rp_id.as_bytes()).to_vec();
+        ad.push(flags);
+        ad.extend_from_slice(&[0, 0, 0, 0]); // signCount 0, as passkeys report
+        ad
+    }
+
+    /// clientDataJSON in the browser's member order; `extra` is appended
+    /// verbatim inside the object (e.g. `,"crossOrigin":false`).
+    pub(crate) fn client_data(type_: &str, challenge: &[u8], origin: &str, extra: &str) -> Vec<u8> {
+        format!(
+            r#"{{"type":"{type_}","challenge":"{}","origin":"{origin}"{extra}}}"#,
+            b64(challenge)
+        )
+        .into_bytes()
+    }
+
+    pub(crate) fn sign(key: &SigningKey, ad: &[u8], cdj: &[u8]) -> Signature {
+        let mut msg = ad.to_vec();
+        msg.extend_from_slice(&Sha256::digest(cdj));
+        key.sign(&msg)
+    }
+
+    pub(crate) fn assertion_json(
+        credential_id: &[u8],
+        user_handle: Option<&[u8]>,
+        ad: &[u8],
+        cdj: &[u8],
+        sig_der: &[u8],
+    ) -> AssertionJson {
+        AssertionJson {
+            id: b64(credential_id),
+            raw_id: b64(credential_id),
+            type_: "public-key".into(),
+            response: AssertionResponseJson {
+                authenticator_data: b64(ad),
+                client_data_json: b64(cdj),
+                signature: b64(sig_der),
+                user_handle: user_handle.map(b64),
+            },
+            client_extension_results: empty_object(),
+        }
+    }
+
+    /// A `webauthn.get` assertion by `key` over `challenge` from `origin` for
+    /// `rp_id`, flags UP|UV, no crossOrigin member.
+    pub(crate) fn signed_get(
+        key: &SigningKey,
+        credential_id: &[u8],
+        rp_id: &str,
+        origin: &str,
+        challenge: &[u8],
+    ) -> AssertionJson {
+        let ad = auth_data(rp_id, 0x05);
+        let cdj = client_data("webauthn.get", challenge, origin, "");
+        let sig = sign(key, &ad, &cdj);
+        assertion_json(credential_id, None, &ad, &cdj, sig.to_der().as_bytes())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_support::{assertion_json, auth_data, b64, client_data, key, sign};
     use super::*;
     use crate::webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
+    use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
-    use sha2::{Digest, Sha256};
 
     const RP: &str = "inblock.io";
     const LEGACY_RP: &str = "siwx.inblock.io";
@@ -313,46 +390,8 @@ mod tests {
             .unwrap()
     }
 
-    fn b64(bytes: &[u8]) -> String {
-        URL_SAFE_NO_PAD.encode(bytes)
-    }
-
-    fn auth_data(rp_id: &str, flags: u8) -> Vec<u8> {
-        let mut ad = Sha256::digest(rp_id.as_bytes()).to_vec();
-        ad.push(flags);
-        ad.extend_from_slice(&[0, 0, 0, 0]); // signCount 0, as passkeys report
-        ad
-    }
-
-    /// clientDataJSON in the browser's member order; `extra` is appended
-    /// verbatim inside the object (e.g. `,"crossOrigin":false`).
-    fn client_data(type_: &str, challenge: &[u8], origin: &str, extra: &str) -> Vec<u8> {
-        format!(
-            r#"{{"type":"{type_}","challenge":"{}","origin":"{origin}"{extra}}}"#,
-            b64(challenge)
-        )
-        .into_bytes()
-    }
-
-    fn sign(key: &SigningKey, ad: &[u8], cdj: &[u8]) -> Signature {
-        let mut msg = ad.to_vec();
-        msg.extend_from_slice(&Sha256::digest(cdj));
-        key.sign(&msg)
-    }
-
     fn assertion_with_sig(ad: &[u8], cdj: &[u8], sig_der: &[u8]) -> AssertionJson {
-        AssertionJson {
-            id: b64(&CRED_ID),
-            raw_id: b64(&CRED_ID),
-            type_: "public-key".into(),
-            response: AssertionResponseJson {
-                authenticator_data: b64(ad),
-                client_data_json: b64(cdj),
-                signature: b64(sig_der),
-                user_handle: Some(b64(&USER_HANDLE)),
-            },
-            client_extension_results: empty_object(),
-        }
+        assertion_json(&CRED_ID, Some(&USER_HANDLE), ad, cdj, sig_der)
     }
 
     fn assertion(key: &SigningKey, ad: &[u8], cdj: &[u8]) -> AssertionJson {
@@ -364,10 +403,6 @@ mod tests {
     fn good(key: &SigningKey) -> AssertionJson {
         let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, r#","crossOrigin":false"#);
         assertion(key, &auth_data(RP, UP_UV), &cdj)
-    }
-
-    fn key(seed: u64) -> SigningKey {
-        SigningKey::random(&mut StdRng::seed_from_u64(seed))
     }
 
     fn verify(a: &AssertionJson) -> Result<RecoveredAssertion, AssertionError> {
