@@ -150,6 +150,12 @@ pub mod webauthn_options;
 pub use webauthn_options::{
     creation_options, request_options, CreationOptionsJson, RequestOptionsJson, PASSKEY_USER_NAME,
 };
+// Test support for consumers (feature `webauthn-testkit`, dev-dependencies
+// only): a seeded software passkey. This crate's own unit tests use it too.
+#[cfg(all(feature = "webauthn", any(test, feature = "webauthn-testkit")))]
+pub mod webauthn_testkit;
+#[cfg(feature = "webauthn-testkit")]
+pub use webauthn_testkit::{AssertOpts, SoftPasskey};
 
 // Credential store (the persistence half of passkey support). The trait +
 // in-memory backend need no `redis`; the Redis backend adds it.
