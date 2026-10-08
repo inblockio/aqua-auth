@@ -2,17 +2,12 @@
 //! aqua-node), through the public API only, against pinned vectors that were
 //! computed outside this crate (origins with Node's WHATWG `URL`, hashes with
 //! Python's hashlib). aqua-explorer consumes the same vectors file.
-
-#![cfg(feature = "webauthn")]
+//! Assertions come from the testkit's `SoftPasskey`.
 
 use aqua_auth::{
-    derive_login_challenge, p256_did_key_from_pubkey, verify_and_recover, AssertionError,
-    AssertionJson, AssertionPolicy, AssertionResponseJson, ExpectedChallenge, LoginChallengeError,
-    LOGIN_CHALLENGE_TAG,
+    derive_login_challenge, verify_and_recover, AssertOpts, AssertionError, AssertionJson,
+    AssertionPolicy, ExpectedChallenge, LoginChallengeError, SoftPasskey, LOGIN_CHALLENGE_TAG,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use p256::ecdsa::{signature::Signer, Signature, SigningKey};
-use rand::{rngs::StdRng, SeedableRng};
 use sha2::{Digest, Sha256};
 
 const VECTORS: &str = include_str!("vectors/webauthn-derived-login-challenge.json");
@@ -52,38 +47,10 @@ fn policy() -> AssertionPolicy {
         .unwrap()
 }
 
-fn b64(bytes: &[u8]) -> String {
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
-/// A browser-shaped assertion from the explorer origin over `challenge`.
-fn assertion(sk: &SigningKey, challenge: &[u8]) -> AssertionJson {
-    let mut ad = Sha256::digest(RP.as_bytes()).to_vec();
-    ad.extend_from_slice(&[0x05, 0, 0, 0, 0]); // UP|UV, signCount 0
-    let cdj = format!(
-        r#"{{"type":"webauthn.get","challenge":"{}","origin":"{EXPLORER}","crossOrigin":false}}"#,
-        b64(challenge)
-    );
-    let mut signed = ad.clone();
-    signed.extend_from_slice(&Sha256::digest(cdj.as_bytes()));
-    let sig: Signature = sk.sign(&signed);
-    AssertionJson {
-        id: b64(b"credential"),
-        raw_id: b64(b"credential"),
-        type_: "public-key".into(),
-        response: AssertionResponseJson {
-            authenticator_data: b64(&ad),
-            client_data_json: b64(cdj.as_bytes()),
-            signature: b64(sig.to_der().as_bytes()),
-            user_handle: None,
-        },
-        client_extension_results: serde_json::json!({}),
-    }
-}
-
-fn did_of(sk: &SigningKey) -> String {
-    let point = sk.verifying_key().to_encoded_point(true);
-    p256_did_key_from_pubkey(point.as_bytes().try_into().unwrap())
+/// A browser-shaped assertion (UP|UV, `crossOrigin: false`) from the
+/// explorer origin over `challenge`.
+fn assertion(pk: &SoftPasskey, challenge: &[u8]) -> AssertionJson {
+    pk.assert(&AssertOpts::new(challenge, EXPLORER))
 }
 
 #[test]
@@ -145,26 +112,26 @@ fn different_origin_gives_different_challenge() {
 
 #[test]
 fn verify_and_recover_accepts_derived_and_rejects_raw_nonce_as_challenge() {
-    let sk = SigningKey::random(&mut StdRng::seed_from_u64(0x0de1_17ed));
+    let pk = SoftPasskey::new_seeded(0x0de1_17ed, RP);
     let nonce = [0x42u8; 32];
     let expected = ExpectedChallenge::DerivedLogin {
         nonce: &nonce,
         node_url: NODE,
     };
     let derived = derive(&nonce, NODE);
-    let rec = verify_and_recover(&assertion(&sk, &derived), expected, &policy())
+    let rec = verify_and_recover(&assertion(&pk, &derived), expected, &policy())
         .expect("the derived challenge is accepted");
-    assert!(rec.candidate_dids().contains(&did_of(&sk)));
+    assert!(rec.candidate_dids().contains(&pk.did()));
     // Another spelling of the same node origin derives the same bytes.
     let respelled = ExpectedChallenge::DerivedLogin {
         nonce: &nonce,
         node_url: "https://NODE.local.inblock.io:8443/",
     };
-    assert!(verify_and_recover(&assertion(&sk, &derived), respelled, &policy()).is_ok());
+    assert!(verify_and_recover(&assertion(&pk, &derived), respelled, &policy()).is_ok());
 
     // The raw node nonce as the challenge (a node-chosen get()) is refused.
     assert_eq!(
-        verify_and_recover(&assertion(&sk, &nonce), expected, &policy()),
+        verify_and_recover(&assertion(&pk, &nonce), expected, &policy()),
         Err(AssertionError::ChallengeMismatch)
     );
     // Derived for another node, or from another nonce: refused.
@@ -173,7 +140,7 @@ fn verify_and_recover_accepts_derived_and_rejects_raw_nonce_as_challenge() {
         derive(&[0x43u8; 32], NODE),
     ] {
         assert_eq!(
-            verify_and_recover(&assertion(&sk, &wrong), expected, &policy()),
+            verify_and_recover(&assertion(&pk, &wrong), expected, &policy()),
             Err(AssertionError::ChallengeMismatch)
         );
     }
@@ -199,9 +166,9 @@ fn opaque_or_unparsable_origin_rejected() {
     ));
     // verify_and_recover reports an unusable expected node URL as such,
     // not as a challenge mismatch.
-    let sk = SigningKey::random(&mut StdRng::seed_from_u64(7));
+    let pk = SoftPasskey::new_seeded(7, RP);
     let nonce = [1u8; 32];
-    let a = assertion(&sk, &derive(&nonce, NODE));
+    let a = assertion(&pk, &derive(&nonce, NODE));
     let broken = ExpectedChallenge::DerivedLogin {
         nonce: &nonce,
         node_url: "file:///etc/hosts",

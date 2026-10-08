@@ -210,12 +210,17 @@ pub fn request_options(rp_id: &str, challenge: &[u8], allow: &[Vec<u8>]) -> Requ
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::webauthn_recover::test_support::b64;
     use serde_json::{json, Value};
     use std::collections::HashSet;
 
     const RP: &str = "inblock.io";
     const CHALLENGE: [u8; 32] = [0xa5; 32];
+
+    /// The expected encoding, from base64's own engine rather than the
+    /// crate's `B64URL` the builders use.
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
 
     fn creation() -> CreationOptionsJson {
         creation_options(RP, "inblock.io", PASSKEY_USER_NAME, &CHALLENGE)

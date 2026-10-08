@@ -98,12 +98,10 @@ pub fn hints_from_cookie_header(cookie_header: &str) -> Vec<DidHint> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::did::p256_did_key_from_pubkey;
-    use crate::webauthn_recover::test_support::key;
+    use crate::webauthn_testkit::SoftPasskey;
 
     fn did(seed: u64) -> String {
-        let point = key(seed).verifying_key().to_encoded_point(true);
-        p256_did_key_from_pubkey(point.as_bytes().try_into().unwrap())
+        SoftPasskey::new_seeded(seed, "inblock.io").did()
     }
 
     fn principal(seed: u64) -> Principal {

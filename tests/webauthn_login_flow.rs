@@ -66,7 +66,10 @@ fn first_visit_two_prompts_resolve_to_signer() {
     // browser carries no hint cookie.
     let pk = SoftPasskey::new_seeded(101, RP);
     let first = request_options(RP, b"first prompt challenge, 32 bytes", &[]);
-    assert!(first.public_key().allow_credentials.is_empty(), "discoverable");
+    assert!(
+        first.public_key().allow_credentials.is_empty(),
+        "discoverable"
+    );
     let rec = login(&pk, &first, SUITE);
     let pending = match rec.select(&[], [false, false]) {
         Selection::NeedSecondAssertion(p) => p,
@@ -86,7 +89,9 @@ fn first_visit_two_prompts_resolve_to_signer() {
     let rec2 = login(&pk, &second, SUITE);
 
     let pending: PendingRecovery = serde_json::from_str(&stored).unwrap();
-    let principal = pending.resolve(&rec2).expect("one key both assertions recover");
+    let principal = pending
+        .resolve(&rec2)
+        .expect("one key both assertions recover");
     assert_eq!(principal.did(), pk.did());
     // The first assertion again is not a second proof.
     assert_eq!(pending.resolve(&rec), Err(SelectionError::Ambiguous));
@@ -111,9 +116,8 @@ fn hinted_login_one_prompt() {
     // Cookies earlier logins set (another passkey's too) come back in the
     // Cookie header next to unrelated ones.
     let cfg = HintCookieConfig::for_rp_id(RP);
-    let set_for = |p: &SoftPasskey| {
-        hint_set_cookie(&Principal::from_trusted_did(&p.did()).unwrap(), &cfg)
-    };
+    let set_for =
+        |p: &SoftPasskey| hint_set_cookie(&Principal::from_trusted_did(&p.did()).unwrap(), &cfg);
     let (mine, theirs) = (set_for(&pk), set_for(&stale));
     let header = format!(
         "session=abc; {}; {}",

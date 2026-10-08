@@ -224,8 +224,9 @@ mod b64url_bytes {
 mod tests {
     use super::*;
     use crate::webauthn_policy::AssertionPolicy;
-    use crate::webauthn_recover::test_support::{b64, key, signed_get};
     use crate::webauthn_recover::{verify_and_recover, ExpectedChallenge, RecoveredAssertion};
+    use crate::webauthn_testkit::{AssertOpts, SoftPasskey};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use p256::ecdsa::SigningKey;
 
     const RP: &str = "inblock.io";
@@ -251,9 +252,20 @@ mod tests {
         p256_did_key_from_pubkey(&compressed(sk))
     }
 
+    /// The key of the seeded software passkey.
+    fn key(seed: u64) -> SigningKey {
+        SoftPasskey::new_seeded(seed, RP).key
+    }
+
     /// A verified assertion by `sk` over `challenge` with credential `cred`.
     fn recovered(sk: &SigningKey, cred: &[u8], challenge: &[u8]) -> RecoveredAssertion {
-        let a = signed_get(sk, cred, RP, ORIGIN, challenge);
+        let passkey = SoftPasskey {
+            key: sk.clone(),
+            credential_id: cred.to_vec(),
+            rp_id: RP.to_owned(),
+            user_handle: None,
+        };
+        let a = passkey.assert(&AssertOpts::new(challenge, ORIGIN));
         verify_and_recover(&a, ExpectedChallenge::Exact(challenge), &policy()).unwrap()
     }
 
@@ -378,7 +390,7 @@ mod tests {
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"candidates": first.candidate_dids(), "credential_id": b64(CRED)})
+            serde_json::json!({"candidates": first.candidate_dids(), "credential_id": URL_SAFE_NO_PAD.encode(CRED)})
         );
         let back: PendingRecovery = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(back, p);

@@ -168,8 +168,8 @@ impl SoftPasskey {
     /// principal only from a verified assertion.
     pub fn attestation_none(&self, challenge: &[u8], origin: &str) -> serde_json::Value {
         let point = self.key.verifying_key().to_encoded_point(false);
-        // COSE_Key (RFC 9053): {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256),
-        // -2: x, -3: y}, in CTAP2 canonical key order.
+        let x = point.x().expect("an uncompressed point has x");
+        let y = point.y().expect("an uncompressed point has y");
         let mut attested = vec![0u8; 16]; // AAGUID: none
         let id_len = u16::try_from(self.credential_id.len())
             .ok()
@@ -177,11 +177,12 @@ impl SoftPasskey {
             .expect("a WebAuthn credential ID is at most 1023 bytes");
         attested.extend_from_slice(&id_len.to_be_bytes());
         attested.extend_from_slice(&self.credential_id);
-        attested.extend_from_slice(&[0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01]);
-        attested.extend_from_slice(&[0x21]);
-        cbor_bytes(&mut attested, point.x().expect("an uncompressed point has x"));
-        attested.extend_from_slice(&[0x22]);
-        cbor_bytes(&mut attested, point.y().expect("an uncompressed point has y"));
+        // COSE_Key (RFC 9053): {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256),
+        // -2: x, -3: y}, in CTAP2 canonical key order.
+        attested.extend_from_slice(&[0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21]);
+        cbor_bytes(&mut attested, x);
+        attested.push(0x22);
+        cbor_bytes(&mut attested, y);
         let authenticator_data =
             authenticator_data(&self.rp_id, FLAG_UP | FLAG_UV | FLAG_AT, &attested);
 
@@ -341,10 +342,7 @@ mod tests {
         let mut ad = Sha256::digest(RP.as_bytes()).to_vec();
         ad.extend_from_slice(&[0x05, 0, 0, 0, 0]); // UP|UV, signCount 0
         assert_eq!(unb64(&a.response.authenticator_data), ad);
-        assert_eq!(
-            a.response.user_handle.as_deref().map(unb64),
-            pk.user_handle
-        );
+        assert_eq!(a.response.user_handle.as_deref().map(unb64), pk.user_handle);
         let sig = Signature::from_der(&unb64(&a.response.signature)).unwrap();
         assert!(sig.normalize_s().is_none(), "low-S by default");
         let rec = verify(&a).unwrap();
@@ -360,29 +358,80 @@ mod tests {
         let base = AssertOpts::new(CHALLENGE, ORIGIN);
         assert!(verify(&pk.assert(&base)).is_ok(), "control");
         for (label, o, want) in [
-            ("UV clear", AssertOpts { flags: 0x01, ..base }, E::UserVerificationMissing),
-            ("UP clear", AssertOpts { flags: 0x04, ..base }, E::UserPresenceMissing),
-            ("crossOrigin true", AssertOpts { cross_origin: Some(true), ..base }, E::CrossOrigin),
-            ("other RP", AssertOpts { rp_id_override: Some("evil.io"), ..base }, E::RpIdNotAllowed),
-            ("create type", AssertOpts { type_: "webauthn.create", ..base }, E::WrongType),
+            (
+                "UV clear",
+                AssertOpts {
+                    flags: 0x01,
+                    ..base
+                },
+                E::UserVerificationMissing,
+            ),
+            (
+                "UP clear",
+                AssertOpts {
+                    flags: 0x04,
+                    ..base
+                },
+                E::UserPresenceMissing,
+            ),
+            (
+                "crossOrigin true",
+                AssertOpts {
+                    cross_origin: Some(true),
+                    ..base
+                },
+                E::CrossOrigin,
+            ),
+            (
+                "other RP",
+                AssertOpts {
+                    rp_id_override: Some("evil.io"),
+                    ..base
+                },
+                E::RpIdNotAllowed,
+            ),
+            (
+                "create type",
+                AssertOpts {
+                    type_: "webauthn.create",
+                    ..base
+                },
+                E::WrongType,
+            ),
             (
                 "unlisted origin",
-                AssertOpts { origin: "https://evil.local.inblock.io:8443", ..base },
+                AssertOpts {
+                    origin: "https://evil.local.inblock.io:8443",
+                    ..base
+                },
                 E::OriginNotAllowed,
             ),
-            ("other challenge", AssertOpts { challenge: b"another", ..base }, E::ChallengeMismatch),
+            (
+                "other challenge",
+                AssertOpts {
+                    challenge: b"another",
+                    ..base
+                },
+                E::ChallengeMismatch,
+            ),
         ] {
             assert_eq!(verify(&pk.assert(&o)), Err(want), "{label}");
         }
         // crossOrigin omitted: absent from clientDataJSON and accepted.
-        let a = pk.assert(&AssertOpts { cross_origin: None, ..base });
+        let a = pk.assert(&AssertOpts {
+            cross_origin: None,
+            ..base
+        });
         let cdj = String::from_utf8(unb64(&a.response.client_data_json)).unwrap();
         assert!(!cdj.contains("crossOrigin"), "{cdj}");
         assert!(verify(&a).is_ok());
         // UV clear passes a policy that waives UV, and reports it.
-        let a = pk.assert(&AssertOpts { flags: 0x01, ..base });
-        let rec = verify_and_recover(&a, ExpectedChallenge::Exact(CHALLENGE), &policy(false))
-            .unwrap();
+        let a = pk.assert(&AssertOpts {
+            flags: 0x01,
+            ..base
+        });
+        let rec =
+            verify_and_recover(&a, ExpectedChallenge::Exact(CHALLENGE), &policy(false)).unwrap();
         assert!(!rec.user_verified);
     }
 

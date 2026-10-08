@@ -298,89 +298,11 @@ fn decode(member: &str, value: &str) -> Result<Vec<u8>, AssertionError> {
         .map_err(|e| AssertionError::Malformed(format!("{member}: {e}")))
 }
 
-/// Assertion builders shared by the unit tests of the store-free login
-/// modules. A local P-256 signer, not an authenticator model.
-#[cfg(test)]
-pub(crate) mod test_support {
-    use super::{empty_object, AssertionJson, AssertionResponseJson};
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-    use p256::ecdsa::{signature::Signer, Signature, SigningKey};
-    use rand::{rngs::StdRng, SeedableRng};
-    use sha2::{Digest, Sha256};
-
-    pub(crate) fn b64(bytes: &[u8]) -> String {
-        URL_SAFE_NO_PAD.encode(bytes)
-    }
-
-    pub(crate) fn key(seed: u64) -> SigningKey {
-        SigningKey::random(&mut StdRng::seed_from_u64(seed))
-    }
-
-    pub(crate) fn auth_data(rp_id: &str, flags: u8) -> Vec<u8> {
-        let mut ad = Sha256::digest(rp_id.as_bytes()).to_vec();
-        ad.push(flags);
-        ad.extend_from_slice(&[0, 0, 0, 0]); // signCount 0, as passkeys report
-        ad
-    }
-
-    /// clientDataJSON in the browser's member order; `extra` is appended
-    /// verbatim inside the object (e.g. `,"crossOrigin":false`).
-    pub(crate) fn client_data(type_: &str, challenge: &[u8], origin: &str, extra: &str) -> Vec<u8> {
-        format!(
-            r#"{{"type":"{type_}","challenge":"{}","origin":"{origin}"{extra}}}"#,
-            b64(challenge)
-        )
-        .into_bytes()
-    }
-
-    pub(crate) fn sign(key: &SigningKey, ad: &[u8], cdj: &[u8]) -> Signature {
-        let mut msg = ad.to_vec();
-        msg.extend_from_slice(&Sha256::digest(cdj));
-        key.sign(&msg)
-    }
-
-    pub(crate) fn assertion_json(
-        credential_id: &[u8],
-        user_handle: Option<&[u8]>,
-        ad: &[u8],
-        cdj: &[u8],
-        sig_der: &[u8],
-    ) -> AssertionJson {
-        AssertionJson {
-            id: b64(credential_id),
-            raw_id: b64(credential_id),
-            type_: "public-key".into(),
-            response: AssertionResponseJson {
-                authenticator_data: b64(ad),
-                client_data_json: b64(cdj),
-                signature: b64(sig_der),
-                user_handle: user_handle.map(b64),
-            },
-            client_extension_results: empty_object(),
-        }
-    }
-
-    /// A `webauthn.get` assertion by `key` over `challenge` from `origin` for
-    /// `rp_id`, flags UP|UV, no crossOrigin member.
-    pub(crate) fn signed_get(
-        key: &SigningKey,
-        credential_id: &[u8],
-        rp_id: &str,
-        origin: &str,
-        challenge: &[u8],
-    ) -> AssertionJson {
-        let ad = auth_data(rp_id, 0x05);
-        let cdj = client_data("webauthn.get", challenge, origin, "");
-        let sig = sign(key, &ad, &cdj);
-        assertion_json(credential_id, None, &ad, &cdj, sig.to_der().as_bytes())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::test_support::{assertion_json, auth_data, b64, client_data, key, sign};
     use super::*;
     use crate::webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
+    use crate::webauthn_testkit::{AssertOpts, SoftPasskey};
     use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -392,6 +314,14 @@ mod tests {
     const USER_HANDLE: [u8; 32] = [9u8; 32];
     const CHALLENGE: &[u8] = b"0123456789abcdef0123456789abcdef";
     const UP_UV: u8 = 0x05;
+
+    fn b64(bytes: &[u8]) -> String {
+        B64URL.encode(bytes)
+    }
+
+    fn unb64(s: &str) -> Vec<u8> {
+        B64URL.decode(s).unwrap()
+    }
 
     fn policy() -> AssertionPolicy {
         policy_uv(true)
@@ -408,19 +338,55 @@ mod tests {
             .unwrap()
     }
 
-    fn assertion_with_sig(ad: &[u8], cdj: &[u8], sig_der: &[u8]) -> AssertionJson {
-        assertion_json(&CRED_ID, Some(&USER_HANDLE), ad, cdj, sig_der)
+    /// A software passkey over `key` with the fixed test credential ID and
+    /// user handle.
+    fn passkey_with(key: SigningKey) -> SoftPasskey {
+        SoftPasskey {
+            key,
+            credential_id: CRED_ID.to_vec(),
+            rp_id: RP.to_owned(),
+            user_handle: Some(USER_HANDLE.to_vec()),
+        }
     }
 
-    fn assertion(key: &SigningKey, ad: &[u8], cdj: &[u8]) -> AssertionJson {
-        let sig = sign(key, ad, cdj);
-        assertion_with_sig(ad, cdj, sig.to_der().as_bytes())
+    fn passkey(seed: u64) -> SoftPasskey {
+        passkey_with(SoftPasskey::new_seeded(seed, RP).key)
+    }
+
+    /// Default options over `CHALLENGE` from `origin`.
+    fn opts(origin: &str) -> AssertOpts<'_> {
+        AssertOpts::new(CHALLENGE, origin)
+    }
+
+    /// Authenticator data for `rp_id` with `flags`, signCount 0, for tests
+    /// that build the signed bytes themselves.
+    fn auth_data(rp_id: &str, flags: u8) -> Vec<u8> {
+        let mut ad = Sha256::digest(rp_id.as_bytes()).to_vec();
+        ad.push(flags);
+        ad.extend_from_slice(&[0, 0, 0, 0]);
+        ad
+    }
+
+    /// clientDataJSON in the browser's member order; `extra` is appended
+    /// verbatim inside the object (e.g. `,"crossOrigin":false`).
+    fn client_data(type_: &str, challenge: &[u8], origin: &str, extra: &str) -> Vec<u8> {
+        format!(
+            r#"{{"type":"{type_}","challenge":"{}","origin":"{origin}"{extra}}}"#,
+            b64(challenge)
+        )
+        .into_bytes()
+    }
+
+    /// `a` with its signature replaced by `sig_der`.
+    fn with_sig(a: &AssertionJson, sig_der: &[u8]) -> AssertionJson {
+        let mut a = a.clone();
+        a.response.signature = b64(sig_der);
+        a
     }
 
     /// A browser-shaped assertion from `ORIGIN` for `RP` with UP|UV.
-    fn good(key: &SigningKey) -> AssertionJson {
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, r#","crossOrigin":false"#);
-        assertion(key, &auth_data(RP, UP_UV), &cdj)
+    fn good(pk: &SoftPasskey) -> AssertionJson {
+        pk.assert(&opts(ORIGIN))
     }
 
     fn verify(a: &AssertionJson) -> Result<RecoveredAssertion, AssertionError> {
@@ -435,22 +401,24 @@ mod tests {
     fn recover_property_signer_among_exactly_two_candidates() {
         let mut rng = StdRng::seed_from_u64(0x5eed_0002);
         for i in 0..256 {
-            let sk = SigningKey::random(&mut rng);
+            let pk = passkey_with(SigningKey::random(&mut rng));
             let mut challenge = [0u8; 32];
             rng.fill_bytes(&mut challenge);
-            let cdj = client_data("webauthn.get", &challenge, ORIGIN, "");
-            let a = assertion(&sk, &auth_data(RP, UP_UV), &cdj);
+            let a = pk.assert(&AssertOpts::new(&challenge, ORIGIN));
             let rec = verify_and_recover(&a, ExpectedChallenge::Exact(&challenge), &policy())
                 .unwrap_or_else(|e| panic!("case {i}: {e}"));
             assert_ne!(rec.candidates[0], rec.candidates[1], "case {i}");
-            assert!(holds(&rec, sk.verifying_key()), "case {i}: signer missing");
+            assert!(
+                holds(&rec, pk.key.verifying_key()),
+                "case {i}: signer missing"
+            );
             let dids = rec.candidate_dids();
             assert_ne!(dids[0], dids[1], "case {i}");
             assert!(
                 dids.iter().all(|d| d.starts_with("did:key:zDn")),
                 "case {i}"
             );
-            let signer = did_key_of(sk.verifying_key());
+            let signer = did_key_of(pk.key.verifying_key());
             assert_eq!(dids.iter().filter(|d| **d == signer).count(), 1, "case {i}");
             assert_eq!(rec.rp_id, RP);
             assert_eq!(rec.origin, ORIGIN);
@@ -463,15 +431,15 @@ mod tests {
 
     #[test]
     fn recover_candidate_set_invariant_under_s_negation() {
-        let sk = key(11);
-        let ad = auth_data(RP, UP_UV);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, "");
-        let sig = sign(&sk, &ad, &cdj);
-        let (r, s) = sig.split_scalars();
-        let negated = Signature::from_scalars(r.to_bytes(), (-*s).to_bytes()).unwrap();
-        assert_ne!(sig, negated);
-        let one = verify(&assertion_with_sig(&ad, &cdj, sig.to_der().as_bytes())).unwrap();
-        let two = verify(&assertion_with_sig(&ad, &cdj, negated.to_der().as_bytes())).unwrap();
+        let pk = passkey(11);
+        let low = pk.assert(&opts(ORIGIN));
+        let high = pk.assert(&AssertOpts {
+            high_s: true,
+            ..opts(ORIGIN)
+        });
+        assert_ne!(low.response.signature, high.response.signature);
+        let one = verify(&low).unwrap();
+        let two = verify(&high).unwrap();
         let set = |rec: &RecoveredAssertion| {
             let mut v: Vec<Vec<u8>> = rec
                 .candidates
@@ -482,12 +450,12 @@ mod tests {
             v
         };
         assert_eq!(set(&one), set(&two));
-        assert!(holds(&one, sk.verifying_key()));
+        assert!(holds(&one, pk.key.verifying_key()));
     }
 
     #[test]
     fn rejects_challenge_mismatch() {
-        let a = good(&key(1));
+        let a = good(&passkey(1));
         assert!(verify(&a).is_ok(), "control");
         let other = verify_and_recover(&a, ExpectedChallenge::Exact(b"another"), &policy());
         assert_eq!(other, Err(AssertionError::ChallengeMismatch));
@@ -497,17 +465,15 @@ mod tests {
 
     #[test]
     fn rejects_origin_not_listed() {
-        let sk = key(2);
+        let pk = passkey(2);
         for origin in [
             "https://evil.local.inblock.io:8443", // within the RP, not listed
             "https://aquafire.local.inblock.io",  // listed host, other port
             "https://aquafire.local.inblock.io:8443/",
             "https://evil.example",
         ] {
-            let cdj = client_data("webauthn.get", CHALLENGE, origin, "");
-            let a = assertion(&sk, &auth_data(RP, UP_UV), &cdj);
             assert_eq!(
-                verify(&a),
+                verify(&pk.assert(&opts(origin))),
                 Err(AssertionError::OriginNotAllowed),
                 "{origin}"
             );
@@ -516,50 +482,60 @@ mod tests {
 
     #[test]
     fn rejects_origin_listed_only_under_other_rp() {
-        let sk = key(3);
+        let pk = passkey(3);
+        let at = |rp: &str, origin: &str| {
+            pk.assert(&AssertOpts {
+                rp_id_override: Some(rp),
+                ..AssertOpts::new(CHALLENGE, origin)
+            })
+        };
         // Controls: each origin under an RP that lists it.
-        let cdj = client_data("webauthn.get", CHALLENGE, SIWX_ORIGIN, "");
-        let rec = verify(&assertion(&sk, &auth_data(LEGACY_RP, UP_UV), &cdj)).unwrap();
+        let rec = verify(&at(LEGACY_RP, SIWX_ORIGIN)).unwrap();
         assert_eq!(rec.rp_id, LEGACY_RP);
-        let rec = verify(&assertion(&sk, &auth_data(RP, UP_UV), &cdj)).unwrap();
+        let rec = verify(&at(RP, SIWX_ORIGIN)).unwrap();
         assert_eq!(rec.rp_id, RP);
         // ORIGIN is listed under RP only, so the legacy RP refuses it.
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, "");
-        let a = assertion(&sk, &auth_data(LEGACY_RP, UP_UV), &cdj);
-        assert_eq!(verify(&a), Err(AssertionError::OriginNotAllowed));
+        assert_eq!(
+            verify(&at(LEGACY_RP, ORIGIN)),
+            Err(AssertionError::OriginNotAllowed)
+        );
     }
 
     #[test]
     fn rejects_rp_id_hash_not_allowed() {
-        let sk = key(4);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, "");
+        let pk = passkey(4);
         for rp in ["evil.io", "local.inblock.io", "io", "INBLOCK.IO"] {
-            let a = assertion(&sk, &auth_data(rp, UP_UV), &cdj);
+            let a = pk.assert(&AssertOpts {
+                rp_id_override: Some(rp),
+                ..opts(ORIGIN)
+            });
             assert_eq!(verify(&a), Err(AssertionError::RpIdNotAllowed), "{rp}");
         }
     }
 
     #[test]
     fn rejects_uv_clear_when_required() {
-        let sk = key(5);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, "");
-        let a = assertion(&sk, &auth_data(RP, 0x01), &cdj);
+        let pk = passkey(5);
+        let a = pk.assert(&AssertOpts {
+            flags: 0x01,
+            ..opts(ORIGIN)
+        });
         assert_eq!(verify(&a), Err(AssertionError::UserVerificationMissing));
         let rec = verify_and_recover(&a, ExpectedChallenge::Exact(CHALLENGE), &policy_uv(false))
             .expect("UV waived by policy");
         assert!(!rec.user_verified);
-        assert!(holds(&rec, sk.verifying_key()));
+        assert!(holds(&rec, pk.key.verifying_key()));
     }
 
     #[test]
     fn rejects_cross_origin_true() {
-        let sk = key(6);
+        let pk = passkey(6);
         let ad = auth_data(RP, UP_UV);
         let with = |extra: &str| {
-            assertion(
-                &sk,
+            pk.assert_raw(
                 &ad,
                 &client_data("webauthn.get", CHALLENGE, ORIGIN, extra),
+                false,
             )
         };
         assert_eq!(
@@ -577,13 +553,13 @@ mod tests {
 
     #[test]
     fn rejects_top_origin_present() {
-        let sk = key(7);
+        let pk = passkey(7);
         let ad = auth_data(RP, UP_UV);
         let with = |extra: &str| {
-            assertion(
-                &sk,
+            pk.assert_raw(
                 &ad,
                 &client_data("webauthn.get", CHALLENGE, ORIGIN, extra),
+                false,
             )
         };
         assert_eq!(
@@ -602,36 +578,42 @@ mod tests {
 
     #[test]
     fn rejects_type_webauthn_create() {
-        let sk = key(8);
-        let cdj = client_data("webauthn.create", CHALLENGE, ORIGIN, "");
-        let a = assertion(&sk, &auth_data(RP, UP_UV), &cdj);
-        assert_eq!(verify(&a), Err(AssertionError::WrongType));
-        let cdj = client_data("payment.get", CHALLENGE, ORIGIN, "");
-        let a = assertion(&sk, &auth_data(RP, UP_UV), &cdj);
-        assert_eq!(verify(&a), Err(AssertionError::WrongType));
+        let pk = passkey(8);
+        for type_ in ["webauthn.create", "payment.get"] {
+            let a = pk.assert(&AssertOpts {
+                type_,
+                ..opts(ORIGIN)
+            });
+            assert_eq!(verify(&a), Err(AssertionError::WrongType), "{type_}");
+        }
     }
 
     #[test]
     fn rejects_up_clear() {
-        let sk = key(9);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, "");
-        let a = assertion(&sk, &auth_data(RP, 0x04), &cdj);
+        let pk = passkey(9);
+        let a = pk.assert(&AssertOpts {
+            flags: 0x04,
+            ..opts(ORIGIN)
+        });
         assert_eq!(verify(&a), Err(AssertionError::UserPresenceMissing));
-        let a = assertion(&sk, &auth_data(RP, 0x00), &cdj);
+        let a = pk.assert(&AssertOpts {
+            flags: 0x00,
+            ..opts(ORIGIN)
+        });
         let lax = verify_and_recover(&a, ExpectedChallenge::Exact(CHALLENGE), &policy_uv(false));
         assert_eq!(lax, Err(AssertionError::UserPresenceMissing));
     }
 
     #[test]
     fn rejects_duplicate_client_data_keys() {
-        let sk = key(10);
+        let pk = passkey(10);
         let ad = auth_data(RP, UP_UV);
         let good_c = b64(CHALLENGE);
         let bad_c = b64(b"another challenge");
         let control =
             format!(r#"{{"type":"webauthn.get","challenge":"{good_c}","origin":"{ORIGIN}"}}"#);
         assert!(
-            verify(&assertion(&sk, &ad, control.as_bytes())).is_ok(),
+            verify(&pk.assert_raw(&ad, control.as_bytes(), false)).is_ok(),
             "control"
         );
         // A parser keeping either the first or the last duplicate would accept
@@ -656,7 +638,7 @@ mod tests {
                 r#"{{"type":"webauthn.get","challenge":"{good_c}","origin":"{ORIGIN}","crossOrigin":true,"crossOrigin":false}}"#
             ),
         ] {
-            let a = assertion(&sk, &ad, cdj.as_bytes());
+            let a = pk.assert_raw(&ad, cdj.as_bytes(), false);
             assert!(
                 matches!(verify(&a), Err(AssertionError::Malformed(_))),
                 "{cdj}"
@@ -666,15 +648,11 @@ mod tests {
 
     #[test]
     fn rejects_non_p256_der_signature() {
-        let sk = key(12);
-        let ad = auth_data(RP, UP_UV);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, "");
-        let sig = sign(&sk, &ad, &cdj);
-        let der = sig.to_der().as_bytes().to_vec();
-        assert!(
-            verify(&assertion_with_sig(&ad, &cdj, &der)).is_ok(),
-            "control"
-        );
+        let pk = passkey(12);
+        let a = good(&pk);
+        assert!(verify(&a).is_ok(), "control");
+        let der = unb64(&a.response.signature);
+        let sig = Signature::from_der(&der).unwrap();
 
         let mut trailing = der.clone();
         trailing.push(0);
@@ -696,7 +674,7 @@ mod tests {
             ("r = n", r_is_n),
         ] {
             assert_eq!(
-                verify(&assertion_with_sig(&ad, &cdj, &bytes)),
+                verify(&with_sig(&a, &bytes)),
                 Err(AssertionError::BadSignature),
                 "{label}"
             );
@@ -705,32 +683,27 @@ mod tests {
 
     #[test]
     fn tampered_auth_data_does_not_recover_signer() {
-        let sk = key(13);
-        let ad = auth_data(RP, UP_UV);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, "");
-        let sig = sign(&sk, &ad, &cdj);
+        let pk = passkey(13);
+        let mut a = good(&pk);
         // Flip the BE bit after signing: every check still passes, but the
         // signed bytes changed, so recovery yields two keys that are not the
         // signer's.
-        let mut tampered = ad.clone();
+        let mut tampered = unb64(&a.response.authenticator_data);
         tampered[32] |= 0x08;
-        let rec = verify(&assertion_with_sig(
-            &tampered,
-            &cdj,
-            sig.to_der().as_bytes(),
-        ))
-        .expect("checks pass on the tampered bytes");
+        a.response.authenticator_data = b64(&tampered);
+        let rec = verify(&a).expect("checks pass on the tampered bytes");
         assert!(rec.backup_eligible);
         assert_ne!(rec.candidates[0], rec.candidates[1]);
-        assert!(!holds(&rec, sk.verifying_key()));
+        assert!(!holds(&rec, pk.key.verifying_key()));
     }
 
     #[test]
     fn accepts_webauthn_rs_assertion_json_shape() {
-        let sk = key(14);
-        let ad = auth_data(RP, UP_UV);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, r#","crossOrigin":false"#);
-        let sig = sign(&sk, &ad, &cdj).to_der().as_bytes().to_vec();
+        let pk = passkey(14);
+        let signed = good(&pk);
+        let ad = unb64(&signed.response.authenticator_data);
+        let cdj = unb64(&signed.response.client_data_json);
+        let sig = unb64(&signed.response.signature);
         let padded = |b: &[u8]| {
             let s = b64(b);
             let pad = (4 - s.len() % 4) % 4;
@@ -767,15 +740,15 @@ mod tests {
         let a: AssertionJson = serde_json::from_value(rs_shape).unwrap();
         let rec = verify(&a).unwrap();
         assert_eq!(rec.user_handle, None);
-        assert!(holds(&rec, sk.verifying_key()));
+        assert!(holds(&rec, pk.key.verifying_key()));
         let a: AssertionJson = serde_json::from_value(browser_shape).unwrap();
         let rec = verify(&a).unwrap();
         assert_eq!(rec.user_handle.as_deref(), Some(&USER_HANDLE[..]));
         assert_eq!(rec.credential_id, CRED_ID.to_vec());
-        assert!(holds(&rec, sk.verifying_key()));
+        assert!(holds(&rec, pk.key.verifying_key()));
 
         // The complement: structure that is not an assertion is Malformed.
-        let base = good(&sk);
+        let base = good(&pk);
         let mut mismatched_id = base.clone();
         mismatched_id.id = b64(b"some other credential");
         let mut wrong_cred_type = base.clone();
@@ -804,11 +777,16 @@ mod tests {
     /// UV or crossOrigin. Store-free login must not inherit that gap.
     #[test]
     fn legacy_verify_accepts_uv0_and_cross_origin_true() {
-        let sk = key(15);
-        let ad = auth_data(RP, 0x01);
-        let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, r#","crossOrigin":true"#);
-        let sig = sign(&sk, &ad, &cdj);
-        let pubkey = sk.verifying_key().to_encoded_point(true);
+        let pk = passkey(15);
+        let a = pk.assert(&AssertOpts {
+            flags: 0x01,
+            cross_origin: Some(true),
+            ..opts(ORIGIN)
+        });
+        let ad = unb64(&a.response.authenticator_data);
+        let cdj = unb64(&a.response.client_data_json);
+        let sig = Signature::from_der(&unb64(&a.response.signature)).unwrap();
+        let pubkey = pk.key.verifying_key().to_encoded_point(true);
         let params = WebAuthnAssertionParams {
             credential_public_key: pubkey.as_bytes(),
             authenticator_data: &ad,
