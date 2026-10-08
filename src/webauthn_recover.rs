@@ -7,6 +7,7 @@
 //! of them; picking which one is candidate selection, not verification.
 
 use crate::did::p256_did_key_from_pubkey;
+use crate::login_challenge::{derive_login_challenge, LoginChallengeError};
 use crate::webauthn::{
     parse_authenticator_data, signed_payload, FLAG_BE, FLAG_BS, FLAG_UP, FLAG_UV,
 };
@@ -82,6 +83,15 @@ fn empty_object() -> serde_json::Value {
 pub enum ExpectedChallenge<'a> {
     /// The exact challenge bytes the server issued.
     Exact(&'a [u8]),
+    /// The derived login challenge for the `nonce` this node issued, with
+    /// `node_url` the node's own public base URL
+    /// ([`crate::derive_login_challenge`]). A raw nonce is refused.
+    DerivedLogin {
+        /// The nonce the node issued.
+        nonce: &'a [u8; 32],
+        /// The node's public base URL; only its origin is bound.
+        node_url: &'a str,
+    },
 }
 
 /// A verified assertion: every check passed and the signature verifies under
@@ -160,6 +170,10 @@ pub enum AssertionError {
     /// The signature is not a P-256 DER ECDSA signature or recovers no key.
     #[error("invalid signature")]
     BadSignature,
+    /// The verifier's own `node_url` in [`ExpectedChallenge::DerivedLogin`]
+    /// is unusable (a configuration error, not the client's).
+    #[error("expected node URL is unusable: {0}")]
+    InvalidNodeUrl(LoginChallengeError),
 }
 
 /// Verify a passkey assertion without a stored public key and recover the two
@@ -202,12 +216,16 @@ pub fn verify_and_recover(
     let challenge = B64URL
         .decode(&client.challenge)
         .map_err(|e| E::Malformed(format!("clientDataJSON challenge: {e}")))?;
-    match expected {
-        ExpectedChallenge::Exact(want) => {
-            if challenge != want {
-                return Err(E::ChallengeMismatch);
-            }
+    let derived;
+    let want: &[u8] = match expected {
+        ExpectedChallenge::Exact(want) => want,
+        ExpectedChallenge::DerivedLogin { nonce, node_url } => {
+            derived = derive_login_challenge(nonce, node_url).map_err(E::InvalidNodeUrl)?;
+            &derived
         }
+    };
+    if challenge != want {
+        return Err(E::ChallengeMismatch);
     }
     let entry = policy
         .entry_for_rp_id_hash(auth_data.rp_id_hash)

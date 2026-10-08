@@ -141,6 +141,10 @@ pub use webauthn_hint::{
     HINT_COOKIE_NAME,
 };
 #[cfg(feature = "webauthn")]
+pub mod login_challenge;
+#[cfg(feature = "webauthn")]
+pub use login_challenge::{derive_login_challenge, LoginChallengeError, LOGIN_CHALLENGE_TAG};
+#[cfg(feature = "webauthn")]
 pub mod webauthn_options;
 #[cfg(feature = "webauthn")]
 pub use webauthn_options::{

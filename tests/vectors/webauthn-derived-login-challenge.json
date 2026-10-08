@@ -1,0 +1,90 @@
+{
+  "description": "Derived passkey login challenge (aqua-auth login_challenge.rs, aqua-explorer). challenge = SHA-256(tag || nonce || origin), where origin is the WHATWG serialization of the node base URL (Rust url::Url::origin().ascii_serialization(), TS new URL(u).origin). Rejected inputs: the URL does not parse, or its scheme is not http or https. Expected values were computed outside the crate: origins checked against Node new URL(u).origin, challenges with Python hashlib.",
+  "tag_utf8": "aqua-auth/webauthn-login/v1",
+  "cases": [
+    {
+      "name": "default https port omitted",
+      "nonce_hex": "5d004ebd9a9a75d186caa4ec7de593214c0bc7cbaa4341f9b18e1fc4c3173018",
+      "node_url": "https://node.inblock.io:443/",
+      "origin": "https://node.inblock.io",
+      "challenge_hex": "03405f01ba18c7556a61dff6cbf91066f3ee97c31a52808ac5d6ca40120dadcd"
+    },
+    {
+      "name": "port 8443 kept",
+      "nonce_hex": "7fdf8f442928fbc29614f23cbe865caa7e2ed5b69cc8f9003e975ebc9aaddcaf",
+      "node_url": "https://node.local.inblock.io:8443",
+      "origin": "https://node.local.inblock.io:8443",
+      "challenge_hex": "3e95cc3d9d51a3a65b704e16252f41846bdfa5df8c67e900281bce55ff80583f"
+    },
+    {
+      "name": "uppercase host lowercased",
+      "nonce_hex": "6b0d4ce8c090dfe1eeae9c3d43a8eff702bfdb4a4aacb2b156248007ca23bcf5",
+      "node_url": "https://NODE.Local.Inblock.IO:8443/",
+      "origin": "https://node.local.inblock.io:8443",
+      "challenge_hex": "7ceeb2a0113ceb87e6aa4084e6eaf14f996c542bbfce44e26135970c427c1f8a"
+    },
+    {
+      "name": "path, query and fragment dropped",
+      "nonce_hex": "399c0b1a36375f45b251f8deab986f09054aa7a80d4c8cb169ad3e623bbcfe3e",
+      "node_url": "https://node.local.inblock.io:8443/api/v1/node?x=1#frag",
+      "origin": "https://node.local.inblock.io:8443",
+      "challenge_hex": "937fa1fd7415b5cfcd3f2523b97b5f52eff099655a4d452188cd7787656cc4ef"
+    },
+    {
+      "name": "trailing slash dropped",
+      "nonce_hex": "c490b700c46f59c1b8b33259645ccf93d73d287dcf73716f005eaacaf890c84e",
+      "node_url": "https://node.local.inblock.io:8443/",
+      "origin": "https://node.local.inblock.io:8443",
+      "challenge_hex": "3cd4438d7b475b658d1a5103e43b4719bf11583afbe621aba2f967c3c48e9338"
+    },
+    {
+      "name": "http localhost with port",
+      "nonce_hex": "bd478ff9209e9b8a57fda1e356ddf671cb3229d8eeaf21bccddb9101d1a4b238",
+      "node_url": "http://localhost:13000",
+      "origin": "http://localhost:13000",
+      "challenge_hex": "7a040862cdf868a0372a008e0169f6e65047a69e796132e82540613e870bd90b"
+    },
+    {
+      "name": "http default port omitted",
+      "nonce_hex": "e0a7433f448362f8402c10a65943e45042dcf06f4a62ad92ad494fa5f2b57eea",
+      "node_url": "http://localhost:80/",
+      "origin": "http://localhost",
+      "challenge_hex": "9ec0ec1007f28a6e9b5e3bf62bddfa74c83c1e44c3c47b5b2f3d6abe14646a30"
+    },
+    {
+      "name": "IDN host in ASCII form",
+      "nonce_hex": "7128b7d5bcf07d3697d4fb785e63a3aa03e137e2d504243d5e05466ac675df8b",
+      "node_url": "https://bücher.example/",
+      "origin": "https://xn--bcher-kva.example",
+      "challenge_hex": "ff3800cadb8a92a738610b07a7c5c97a27a0751ea81a235dc21698bd6561ad92"
+    },
+    {
+      "name": "IPv6 literal",
+      "nonce_hex": "9ef17f9944f75e8fe39c7ac0f239545cc3664cd07f8d1c3500c2aea2faae0102",
+      "node_url": "http://[::1]:13000/",
+      "origin": "http://[::1]:13000",
+      "challenge_hex": "1395253103d005d6699b3c46ba48614feee713c8c2368e9bdcb86d3e957c777d"
+    },
+    {
+      "name": "user info dropped",
+      "nonce_hex": "0335225fdfb592d3f43849434fba5296e8e608cc994fe9382a0a849b7dd9e82f",
+      "node_url": "https://user:pw@node.inblock.io/",
+      "origin": "https://node.inblock.io",
+      "challenge_hex": "b0064b5afe5ead8153eae5660c94a6e6821082441c94c3bbfb7a7dfb7ab38c14"
+    }
+  ],
+  "rejected_node_urls": [
+    "not a url",
+    "",
+    "/relative/path",
+    "node.inblock.io:8443",
+    "https://",
+    "http://exa mple.com",
+    "data:text/plain,x",
+    "file:///etc/hosts",
+    "blob:https://node.inblock.io/1234",
+    "ws://node.inblock.io",
+    "ftp://node.inblock.io",
+    "javascript:alert(1)"
+  ]
+}
