@@ -14,8 +14,18 @@
 //! attestation). For dev-dependencies only: the keys come from small seeds
 //! and are therefore public.
 
-use crate::webauthn_recover::AssertionJson;
-use p256::ecdsa::SigningKey;
+use crate::did::p256_did_key_from_pubkey;
+use crate::webauthn::{signed_payload, FLAG_UP, FLAG_UV};
+use crate::webauthn_recover::{AssertionJson, AssertionResponseJson, B64URL};
+use base64::Engine as _;
+use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
+use sha2::{Digest, Sha256};
+
+/// Attested credential data included (WebAuthn section 6.1).
+const FLAG_AT: u8 = 0x40;
+/// COSE algorithm identifier for ES256.
+const COSE_ES256: i64 = -7;
 
 /// A seeded software passkey: one P-256 key, one credential ID, one RP ID.
 ///
@@ -61,7 +71,7 @@ impl<'a> AssertOpts<'a> {
         AssertOpts {
             challenge,
             origin,
-            flags: 0x05,
+            flags: FLAG_UP | FLAG_UV,
             cross_origin: Some(false),
             rp_id_override: None,
             type_: "webauthn.get",
@@ -73,42 +83,190 @@ impl<'a> AssertOpts<'a> {
 impl SoftPasskey {
     /// A passkey whose key, credential ID and user handle are drawn from
     /// `StdRng::seed_from_u64(seed)`, in that order.
-    pub fn new_seeded(_seed: u64, _rp_id: &str) -> Self {
-        unimplemented!("SoftPasskey::new_seeded")
+    pub fn new_seeded(seed: u64, rp_id: &str) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let key = SigningKey::random(&mut rng);
+        let mut credential_id = vec![0u8; 16];
+        rng.fill_bytes(&mut credential_id);
+        let mut user_handle = vec![0u8; 32];
+        rng.fill_bytes(&mut user_handle);
+        SoftPasskey {
+            key,
+            credential_id,
+            rp_id: rp_id.to_owned(),
+            user_handle: Some(user_handle),
+        }
     }
 
     /// The credential's `did:key:zDn...`.
     pub fn did(&self) -> String {
-        unimplemented!("SoftPasskey::did")
+        let point = self.key.verifying_key().to_encoded_point(true);
+        let compressed: &[u8; 33] = point
+            .as_bytes()
+            .try_into()
+            .expect("a compressed P-256 point is 33 bytes");
+        p256_did_key_from_pubkey(compressed)
     }
 
     /// The public key as a DER SubjectPublicKeyInfo, as `getPublicKey()`
     /// returns it after `create()`.
     pub fn spki_der(&self) -> Vec<u8> {
-        unimplemented!("SoftPasskey::spki_der")
+        use p256::pkcs8::EncodePublicKey;
+        self.key
+            .verifying_key()
+            .to_public_key_der()
+            .expect("a P-256 key encodes as SubjectPublicKeyInfo")
+            .into_vec()
     }
 
     /// A signed assertion shaped by `o`.
-    pub fn assert(&self, _o: &AssertOpts<'_>) -> AssertionJson {
-        unimplemented!("SoftPasskey::assert")
+    pub fn assert(&self, o: &AssertOpts<'_>) -> AssertionJson {
+        let rp_id = o.rp_id_override.unwrap_or(&self.rp_id);
+        let authenticator_data = authenticator_data(rp_id, o.flags, &[]);
+        let client_data_json = client_data_json(o.type_, o.challenge, o.origin, o.cross_origin);
+        self.assert_raw(&authenticator_data, &client_data_json, o.high_s)
     }
 
     /// A signed assertion over exactly these authenticator data and
     /// clientDataJSON bytes (for structure tests the knobs cannot express).
     pub fn assert_raw(
         &self,
-        _authenticator_data: &[u8],
-        _client_data_json: &[u8],
-        _high_s: bool,
+        authenticator_data: &[u8],
+        client_data_json: &[u8],
+        high_s: bool,
     ) -> AssertionJson {
-        unimplemented!("SoftPasskey::assert_raw")
+        let low: Signature = self
+            .key
+            .sign(&signed_payload(authenticator_data, client_data_json));
+        let low = low.normalize_s().unwrap_or(low);
+        let signature = if high_s {
+            let (r, s) = low.split_scalars();
+            Signature::from_scalars(r.to_bytes(), (-*s).to_bytes())
+                .expect("n - s is a valid nonzero scalar")
+        } else {
+            low
+        };
+        AssertionJson {
+            id: b64(&self.credential_id),
+            raw_id: b64(&self.credential_id),
+            type_: "public-key".to_owned(),
+            response: AssertionResponseJson {
+                authenticator_data: b64(authenticator_data),
+                client_data_json: b64(client_data_json),
+                signature: b64(signature.to_der().as_bytes()),
+                user_handle: self.user_handle.as_deref().map(b64),
+            },
+            client_extension_results: serde_json::json!({}),
+        }
     }
 
     /// The `RegistrationResponseJSON` of a `create()` over `challenge` from
     /// `origin`, with attestation `none`.
-    pub fn attestation_none(&self, _challenge: &[u8], _origin: &str) -> serde_json::Value {
-        unimplemented!("SoftPasskey::attestation_none")
+    ///
+    /// Nothing in it is signed: like a real `none` attestation, it would carry
+    /// any public key and credential ID equally well. A server must take a
+    /// principal only from a verified assertion.
+    pub fn attestation_none(&self, challenge: &[u8], origin: &str) -> serde_json::Value {
+        let point = self.key.verifying_key().to_encoded_point(false);
+        // COSE_Key (RFC 9053): {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256),
+        // -2: x, -3: y}, in CTAP2 canonical key order.
+        let mut attested = vec![0u8; 16]; // AAGUID: none
+        let id_len = u16::try_from(self.credential_id.len())
+            .ok()
+            .filter(|len| *len <= 1023)
+            .expect("a WebAuthn credential ID is at most 1023 bytes");
+        attested.extend_from_slice(&id_len.to_be_bytes());
+        attested.extend_from_slice(&self.credential_id);
+        attested.extend_from_slice(&[0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01]);
+        attested.extend_from_slice(&[0x21]);
+        cbor_bytes(&mut attested, point.x().expect("an uncompressed point has x"));
+        attested.extend_from_slice(&[0x22]);
+        cbor_bytes(&mut attested, point.y().expect("an uncompressed point has y"));
+        let authenticator_data =
+            authenticator_data(&self.rp_id, FLAG_UP | FLAG_UV | FLAG_AT, &attested);
+
+        let mut attestation_object = vec![0xa3];
+        cbor_text(&mut attestation_object, "fmt");
+        cbor_text(&mut attestation_object, "none");
+        cbor_text(&mut attestation_object, "attStmt");
+        attestation_object.push(0xa0);
+        cbor_text(&mut attestation_object, "authData");
+        cbor_bytes(&mut attestation_object, &authenticator_data);
+
+        let client_data_json = client_data_json("webauthn.create", challenge, origin, Some(false));
+        serde_json::json!({
+            "id": b64(&self.credential_id),
+            "rawId": b64(&self.credential_id),
+            "type": "public-key",
+            "authenticatorAttachment": "platform",
+            "response": {
+                "clientDataJSON": b64(&client_data_json),
+                "authenticatorData": b64(&authenticator_data),
+                "transports": ["internal"],
+                "publicKey": b64(&self.spki_der()),
+                "publicKeyAlgorithm": COSE_ES256,
+                "attestationObject": b64(&attestation_object),
+            },
+            "clientExtensionResults": {"credProps": {"rk": true}},
+        })
     }
+}
+
+fn b64(bytes: &[u8]) -> String {
+    B64URL.encode(bytes)
+}
+
+/// `SHA-256(rp_id) || flags || signCount 0 || attested`.
+fn authenticator_data(rp_id: &str, flags: u8, attested: &[u8]) -> Vec<u8> {
+    let mut ad = Sha256::digest(rp_id.as_bytes()).to_vec();
+    ad.push(flags);
+    ad.extend_from_slice(&[0, 0, 0, 0]);
+    ad.extend_from_slice(attested);
+    ad
+}
+
+/// clientDataJSON in the browser's member order.
+fn client_data_json(
+    type_: &str,
+    challenge: &[u8],
+    origin: &str,
+    cross_origin: Option<bool>,
+) -> Vec<u8> {
+    let string = |s: &str| serde_json::to_string(s).expect("a str serialises");
+    let cross_origin = cross_origin
+        .map(|c| format!(r#","crossOrigin":{c}"#))
+        .unwrap_or_default();
+    format!(
+        r#"{{"type":{},"challenge":"{}","origin":{}{cross_origin}}}"#,
+        string(type_),
+        b64(challenge),
+        string(origin),
+    )
+    .into_bytes()
+}
+
+/// A CBOR text string (major type 3); short strings only.
+fn cbor_text(out: &mut Vec<u8>, s: &str) {
+    let len = u8::try_from(s.len())
+        .ok()
+        .filter(|len| *len < 24)
+        .expect("short CBOR text");
+    out.push(0x60 | len);
+    out.extend_from_slice(s.as_bytes());
+}
+
+/// A CBOR byte string (major type 2) of up to 65535 bytes.
+fn cbor_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    match bytes.len() {
+        len @ 0..=23 => out.push(0x40 | len as u8),
+        len @ 24..=0xff => out.extend_from_slice(&[0x58, len as u8]),
+        len => {
+            let len = u16::try_from(len).expect("CBOR byte string under 64 KiB");
+            out.push(0x59);
+            out.extend_from_slice(&len.to_be_bytes());
+        }
+    }
+    out.extend_from_slice(bytes);
 }
 
 #[cfg(test)]
@@ -119,11 +277,7 @@ mod tests {
         verify_and_recover, AssertionError, ExpectedChallenge, RecoveredAssertion, B64URL,
     };
     use crate::webauthn_select::DidHint;
-    use base64::Engine as _;
-    use p256::ecdsa::Signature;
-    use rand::{rngs::StdRng, SeedableRng};
     use serde_json::{json, Value};
-    use sha2::{Digest, Sha256};
 
     const RP: &str = "inblock.io";
     const ORIGIN: &str = "https://aquafire.local.inblock.io:8443";
