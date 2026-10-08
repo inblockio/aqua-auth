@@ -116,6 +116,13 @@ pub mod webauthn;
 #[cfg(feature = "webauthn")]
 pub use webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
 
+// Store-free passkey login (0.9.0): which RPs and origins an assertion may
+// come from, independent of any credential store.
+#[cfg(feature = "webauthn")]
+pub mod webauthn_policy;
+#[cfg(feature = "webauthn")]
+pub use webauthn_policy::{AssertionPolicy, AssertionPolicyBuilder, PolicyError, RpEntry};
+
 // Credential store (the persistence half of passkey support). The trait +
 // in-memory backend need no `redis`; the Redis backend adds it.
 #[cfg(feature = "webauthn")]

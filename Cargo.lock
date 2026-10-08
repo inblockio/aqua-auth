@@ -65,6 +65,7 @@ dependencies = [
  "chrono",
  "curve25519-dalek",
  "dashmap",
+ "ecdsa",
  "ed25519-dalek",
  "hex",
  "k256",
