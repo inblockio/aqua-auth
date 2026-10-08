@@ -10,6 +10,53 @@ use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
 use p256::EncodedPoint;
 use sha2::{Digest, Sha256};
 
+/// User Present flag bit of `authenticatorData` (WebAuthn section 6.1).
+pub(crate) const FLAG_UP: u8 = 0x01;
+/// User Verified flag bit.
+pub(crate) const FLAG_UV: u8 = 0x04;
+/// Backup Eligibility flag bit.
+pub(crate) const FLAG_BE: u8 = 0x08;
+/// Backup State flag bit.
+pub(crate) const FLAG_BS: u8 = 0x10;
+
+/// The fixed head of `authenticatorData` that assertion checks read.
+pub(crate) struct AuthenticatorData<'a> {
+    /// SHA-256 of the RP ID the authenticator scoped the credential to.
+    pub(crate) rp_id_hash: &'a [u8; 32],
+    /// The flags byte (`FLAG_*`).
+    pub(crate) flags: u8,
+}
+
+/// Split `authenticatorData` into its RP ID hash and flags. Shared by the
+/// stored-key verifier here and the store-free one in `webauthn_recover`; the
+/// error is the reason text each wraps in its own error type.
+pub(crate) fn parse_authenticator_data(bytes: &[u8]) -> Result<AuthenticatorData<'_>, String> {
+    // 32 rpIdHash + 1 flags + 4 signCount
+    if bytes.len() < 37 {
+        return Err(format!(
+            "authenticatorData too short: {} bytes, need at least 37",
+            bytes.len()
+        ));
+    }
+    let rp_id_hash = bytes[0..32]
+        .try_into()
+        .expect("a 32-byte slice converts to a 32-byte array");
+    Ok(AuthenticatorData {
+        rp_id_hash,
+        flags: bytes[32],
+    })
+}
+
+/// The bytes an assertion signature covers:
+/// `authenticatorData || SHA-256(clientDataJSON)`.
+pub(crate) fn signed_payload(authenticator_data: &[u8], client_data_json: &[u8]) -> Vec<u8> {
+    let client_data_hash = Sha256::digest(client_data_json);
+    let mut payload = Vec::with_capacity(authenticator_data.len() + client_data_hash.len());
+    payload.extend_from_slice(authenticator_data);
+    payload.extend_from_slice(&client_data_hash);
+    payload
+}
+
 /// Parameters for verifying a WebAuthn assertion.
 pub struct WebAuthnAssertionParams<'a> {
     /// 33-byte compressed SEC1 P-256 public key
@@ -36,24 +83,19 @@ pub struct WebAuthnAssertionParams<'a> {
 /// - `Err(CryptoError::InvalidSignature(...))` for structural problems
 pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<bool, CryptoError> {
     // 1. Validate authenticatorData length (minimum 37 bytes: 32 rpIdHash + 1 flags + 4 signCount)
-    if params.authenticator_data.len() < 37 {
-        return Err(CryptoError::InvalidSignature(format!(
-            "authenticatorData too short: {} bytes, need at least 37",
-            params.authenticator_data.len()
-        )));
-    }
+    let auth_data = parse_authenticator_data(params.authenticator_data)
+        .map_err(CryptoError::InvalidSignature)?;
 
     // 2. Verify rpIdHash matches SHA-256(expected_rp_id)
     let expected_rp_id_hash = Sha256::digest(params.expected_rp_id.as_bytes());
-    if params.authenticator_data[0..32] != expected_rp_id_hash[..] {
+    if auth_data.rp_id_hash[..] != expected_rp_id_hash[..] {
         return Err(CryptoError::InvalidSignature(
             "rpIdHash mismatch: authenticatorData does not match expected rpId".to_string(),
         ));
     }
 
     // 3. Verify User Present flag (bit 0 of flags byte at offset 32)
-    let flags = params.authenticator_data[32];
-    if flags & 0x01 == 0 {
+    if auth_data.flags & FLAG_UP == 0 {
         return Err(CryptoError::InvalidSignature(
             "User Present flag not set in authenticatorData".to_string(),
         ));
@@ -108,11 +150,7 @@ pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<boo
     }
 
     // 8. Compute signed_payload = authenticatorData || SHA-256(clientDataJSON)
-    let client_data_hash = Sha256::digest(params.client_data_json);
-    let mut signed_payload =
-        Vec::with_capacity(params.authenticator_data.len() + client_data_hash.len());
-    signed_payload.extend_from_slice(params.authenticator_data);
-    signed_payload.extend_from_slice(&client_data_hash);
+    let signed_payload = signed_payload(params.authenticator_data, params.client_data_json);
 
     // 9. Verify P-256 ECDSA signature over signed_payload
     if params.signature.len() != 64 {

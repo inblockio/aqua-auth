@@ -6,8 +6,31 @@
 //! two P-256 public keys the ECDSA signature verifies under. The signer is one
 //! of them; picking which one is candidate selection, not verification.
 
+use crate::did::p256_did_key_from_pubkey;
+use crate::webauthn::{
+    parse_authenticator_data, signed_payload, FLAG_BE, FLAG_BS, FLAG_UP, FLAG_UV,
+};
 use crate::webauthn_policy::AssertionPolicy;
+use base64::{
+    alphabet,
+    engine::{
+        general_purpose::{GeneralPurpose, GeneralPurposeConfig},
+        DecodePaddingMode,
+    },
+    Engine as _,
+};
+use ecdsa::RecoveryId;
+use p256::ecdsa::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+/// base64url, padding optional on input, none on output.
+const B64URL: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::URL_SAFE,
+    GeneralPurposeConfig::new()
+        .with_encode_padding(false)
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 
 /// A WebAuthn assertion as the browser's `PublicKeyCredential.toJSON()` (or
 /// webauthn-rs's `PublicKeyCredential`) serialises it. Binary members are
@@ -81,7 +104,26 @@ pub struct RecoveredAssertion {
     /// The user handle, when the authenticator returned one.
     pub user_handle: Option<Vec<u8>>,
     /// The two keys the signature verifies under (y parity even, then odd).
-    candidates: [p256::ecdsa::VerifyingKey; 2],
+    candidates: [VerifyingKey; 2],
+}
+
+impl RecoveredAssertion {
+    /// The two candidate signers as `did:key:zDn...` DIDs, in a fixed order.
+    /// Exactly one of them made the signature; neither is a principal until
+    /// candidate selection picks it.
+    pub fn candidate_dids(&self) -> [String; 2] {
+        self.candidates.each_ref().map(did_key_of)
+    }
+}
+
+/// The `did:key` of a P-256 verifying key (compressed SEC1 point).
+fn did_key_of(vk: &VerifyingKey) -> String {
+    let point = vk.to_encoded_point(true);
+    let compressed: &[u8; 33] = point
+        .as_bytes()
+        .try_into()
+        .expect("a compressed P-256 point is 33 bytes");
+    p256_did_key_from_pubkey(compressed)
 }
 
 /// Why an assertion was refused.
@@ -127,15 +169,122 @@ pub fn verify_and_recover(
     expected: ExpectedChallenge<'_>,
     policy: &AssertionPolicy,
 ) -> Result<RecoveredAssertion, AssertionError> {
-    let _ = (a, expected, policy);
-    Err(AssertionError::Malformed("unimplemented".into()))
+    use AssertionError as E;
+
+    // Structure: every binary member decodes, `id` agrees with `rawId`.
+    if a.type_ != "public-key" {
+        return Err(E::Malformed(format!(
+            "credential type {:?} is not public-key",
+            a.type_
+        )));
+    }
+    let credential_id = decode("rawId", &a.raw_id)?;
+    if decode("id", &a.id)? != credential_id {
+        return Err(E::Malformed("id does not match rawId".into()));
+    }
+    let auth_data_bytes = decode("authenticatorData", &a.response.authenticator_data)?;
+    let client_data_json = decode("clientDataJSON", &a.response.client_data_json)?;
+    let signature = decode("signature", &a.response.signature)?;
+    let user_handle = a
+        .response
+        .user_handle
+        .as_deref()
+        .map(|h| decode("userHandle", h))
+        .transpose()?;
+    let auth_data = parse_authenticator_data(&auth_data_bytes).map_err(E::Malformed)?;
+    let client: ClientData = serde_json::from_slice(&client_data_json)
+        .map_err(|e| E::Malformed(format!("clientDataJSON: {e}")))?;
+
+    // Ceremony checks, none of which needs the public key.
+    if client.type_ != "webauthn.get" {
+        return Err(E::WrongType);
+    }
+    let challenge = B64URL
+        .decode(&client.challenge)
+        .map_err(|e| E::Malformed(format!("clientDataJSON challenge: {e}")))?;
+    match expected {
+        ExpectedChallenge::Exact(want) => {
+            if challenge != want {
+                return Err(E::ChallengeMismatch);
+            }
+        }
+    }
+    let entry = policy
+        .entry_for_rp_id_hash(auth_data.rp_id_hash)
+        .ok_or(E::RpIdNotAllowed)?;
+    if !entry.allows_origin(&client.origin) {
+        return Err(E::OriginNotAllowed);
+    }
+    if client.cross_origin == Some(true) {
+        return Err(E::CrossOrigin);
+    }
+    if client.top_origin {
+        return Err(E::TopOriginPresent);
+    }
+    if auth_data.flags & FLAG_UP == 0 {
+        return Err(E::UserPresenceMissing);
+    }
+    let user_verified = auth_data.flags & FLAG_UV != 0;
+    if policy.require_uv() && !user_verified {
+        return Err(E::UserVerificationMissing);
+    }
+
+    // Recovery: both y parities of R (x-reduced ids skipped: r >= n has
+    // probability about 2^-128 for P-256). Negating s swaps the two keys, so
+    // the candidate set does not depend on the signature's s form.
+    let sig = Signature::from_der(&signature).map_err(|_| E::BadSignature)?;
+    let sig = sig.normalize_s().unwrap_or(sig);
+    let z = Sha256::digest(signed_payload(&auth_data_bytes, &client_data_json));
+    let recover = |y_odd: bool| {
+        VerifyingKey::recover_from_prehash(&z, &sig, RecoveryId::new(y_odd, false))
+            .map_err(|_| E::BadSignature)
+    };
+    let candidates = [recover(false)?, recover(true)?];
+
+    Ok(RecoveredAssertion {
+        rp_id: entry.rp_id.clone(),
+        origin: client.origin,
+        user_verified,
+        backup_eligible: auth_data.flags & FLAG_BE != 0,
+        backup_state: auth_data.flags & FLAG_BS != 0,
+        credential_id,
+        user_handle,
+        candidates,
+    })
+}
+
+/// The clientDataJSON members the checks read. A typed struct rather than a
+/// `serde_json::Value`, because serde refuses a duplicate known member here,
+/// where a map keeps one of the two values silently. Unknown members are
+/// ignored (browsers add some).
+#[derive(Deserialize)]
+struct ClientData {
+    #[serde(rename = "type")]
+    type_: String,
+    challenge: String,
+    origin: String,
+    #[serde(rename = "crossOrigin", default)]
+    cross_origin: Option<bool>,
+    /// Whether `topOrigin` is present at all (any value, `null` included).
+    #[serde(rename = "topOrigin", default, deserialize_with = "present")]
+    top_origin: bool,
+}
+
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    serde::de::IgnoredAny::deserialize(d).map(|_| true)
+}
+
+fn decode(member: &str, value: &str) -> Result<Vec<u8>, AssertionError> {
+    B64URL
+        .decode(value)
+        .map_err(|e| AssertionError::Malformed(format!("{member}: {e}")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use sha2::{Digest, Sha256};
@@ -242,6 +391,14 @@ mod tests {
                 .unwrap_or_else(|e| panic!("case {i}: {e}"));
             assert_ne!(rec.candidates[0], rec.candidates[1], "case {i}");
             assert!(holds(&rec, sk.verifying_key()), "case {i}: signer missing");
+            let dids = rec.candidate_dids();
+            assert_ne!(dids[0], dids[1], "case {i}");
+            assert!(
+                dids.iter().all(|d| d.starts_with("did:key:zDn")),
+                "case {i}"
+            );
+            let signer = did_key_of(sk.verifying_key());
+            assert_eq!(dids.iter().filter(|d| **d == signer).count(), 1, "case {i}");
             assert_eq!(rec.rp_id, RP);
             assert_eq!(rec.origin, ORIGIN);
             assert!(rec.user_verified);
@@ -522,11 +679,9 @@ mod tests {
         let cdj = client_data("webauthn.get", CHALLENGE, ORIGIN, r#","crossOrigin":false"#);
         let sig = sign(&sk, &ad, &cdj).to_der().as_bytes().to_vec();
         let padded = |b: &[u8]| {
-            let mut s = b64(b);
-            while s.len() % 4 != 0 {
-                s.push('=');
-            }
-            s
+            let s = b64(b);
+            let pad = (4 - s.len() % 4) % 4;
+            s + &"=".repeat(pad)
         };
         // webauthn-rs-proto 0.6.1-dev `PublicKeyCredential` as it serialises:
         // `extensions`, unpadded base64url, `userHandle: null`.
