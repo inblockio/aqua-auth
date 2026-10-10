@@ -6,6 +6,62 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-10
+
+Store-free passkey login. A P-256 passkey logs in as the `did:key:zDn...` of
+its own public key at every service under the same RP ID, and no service needs
+a credential store for it: the verifier recovers the two candidate public keys
+from the signature, and a DID hint cookie, a known principal or a second
+assertion picks the signer. Normative description: SPEC section 12. Additive
+throughout; a consumer that does not use passkeys moves with the tag alone
+(`CONSUMERS.md`, "Migrating to 0.9.0").
+
+### Added
+
+- **Relying-party policy:** `AssertionPolicy`, `AssertionPolicyBuilder`,
+  `RpEntry`, `PolicyError` (`src/webauthn_policy.rs`). RP IDs and origins are
+  validated and normalised once; `require_uv` defaults to true.
+- **Verify and recover:** `verify_and_recover`, `AssertionJson`,
+  `AssertionResponseJson`, `ExpectedChallenge`, `RecoveredAssertion`,
+  `AssertionError` (`src/webauthn_recover.rs`). Checks type, challenge, RP ID
+  hash, origin, `crossOrigin`, `topOrigin`, UP and UV, refuses duplicated
+  clientDataJSON members, then recovers both candidate keys.
+- **Candidate selection:** `DidHint` (canonical P-256 `did:key` only;
+  `DidHint::from_spki_der` for the sign-up key hint), `RecoveredAssertion::select`
+  and `candidate_dids`, `Selection`, `SelectedBy`, `PendingRecovery`,
+  `SelectionError` (`src/webauthn_select.rs`).
+- **DID hint cookie:** `HINT_COOKIE_NAME`, `HintCookieConfig`,
+  `hint_set_cookie`, `hint_clear_cookie`, `hints_from_cookie_header`
+  (`src/webauthn_hint.rs`).
+- **Options builders:** `creation_options`, `request_options`,
+  `CreationOptionsJson`, `RequestOptionsJson`, `PASSKEY_USER_NAME`
+  (`src/webauthn_options.rs`): ES256 only, resident key and user verification
+  required, attestation `none`, random 32-byte `user.id`.
+- **Derived login challenge:** `derive_login_challenge`, `LOGIN_CHALLENGE_TAG`,
+  `LoginChallengeError` (`src/login_challenge.rs`), with cross-language vectors
+  in `tests/vectors/webauthn-derived-login-challenge.json`.
+- **P-256 `did:key` decoder:** `p256_pubkey_from_did_key`.
+- **Feature `webauthn-testkit`:** `SoftPasskey` and `AssertOpts`
+  (`src/webauthn_testkit.rs`), a seeded software passkey for consumers'
+  dev-dependencies: browser-shaped assertions with one knob per verifier
+  check, high-S signatures, and `none` attestations that webauthn-rs accepts.
+
+### Changed
+
+- The `webauthn` feature also enables `ecdsa` 0.16 (verifying only; the line
+  `p256` 0.13 already builds on), `url` and `rand`. It still pulls no
+  webauthn-rs.
+- `verify_webauthn_assertion` keeps its behaviour (it checks neither UV nor
+  `crossOrigin`, pinned by a characterization test) and is not deprecated; it
+  now shares authenticator data parsing and the signed payload with
+  `verify_and_recover`.
+- `FinishedRegistration::did` (feature `ceremony`) is documented as unproven:
+  never mint a session or principal from a registration.
+- `aqua-auth-directory` requires `aqua-auth` 0.9.
+- The test targets `webauthn_derived_challenge` and `webauthn_login_flow`
+  declare `required-features = ["webauthn-testkit"]`, so a lane without the
+  feature skips them instead of reporting an empty binary as a pass.
+
 ### Fixed
 
 - **Ed25519 signatures are verified strictly, and weak or torsioned public keys are
@@ -40,8 +96,8 @@ semver, staying below 1.0 while the crate is in active development.
   **The one observable behaviour change:** `ChallengeStore::create` and
   `Principal::from_trusted_did` now refuse DIDs they used to accept. None of
   those DIDs could ever have produced a verifying signature, so no legitimate
-  caller is affected, which is why this lands in 0.8.0 rather than needing a
-  patch release of its own. The refusal set is also a strict subset of what
+  caller is affected, which is why it ships in a minor release rather than a
+  patch release of its own (it landed after the 0.8.0 bump, so 0.9.0 carries it). The refusal set is also a strict subset of what
   verification already refused, by construction rather than by review: each
   arm of `validate_did_well_formed()` calls the same parser the corresponding
   verifier calls first, so the new check cannot reject anything the crate

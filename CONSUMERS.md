@@ -6,18 +6,17 @@ its consumers, which is how `main` and `feat/backend-unification` drifted into
 two heads for six weeks without anyone noticing: the head with all the tests had
 no users, and the head with all the users had no tests.
 
-Last verified: **2026-09-11**, against `aqua-auth` 0.7.0 (`v0.7.0` / `CheckPoint.20260911`,
-both tags on commit `97f69c3`; `CheckPoint.*` tags are historical, see "Release tags").
+Last verified: **2026-10-08**, from each consumer's `Cargo.toml` at the commit
+named in the table (`git show <sha>:Cargo.toml`). The rows for aqua-agents and
+aqua-timestamps were not re-checked and date from 2026-08-30.
 
-> **0.8.0 is on `main` and no consumer has moved.** The version bumped on
-> 2026-09-11 (merge `0271aaf`); the table below is still accurate, and every row
-> in it is now one minor version behind. **No release tag has been cut**, deliberately,
-> because rule 1 says a tag drags all five consumers in one batch and that batch
-> has not been scheduled. Nothing breaks in the meantime: 0.8.0 breaks no wire
-> contract and its one deprecation is a warning, not a removal. Two consumers
-> also have companion PRs that should land with the bump, `inblockio/aqua-node`
-> #41 and #42 and `inblockio/aquafier-rs` #192 and #193; #41 and #192 are hard
-> prerequisites for `did:aqua`, the other two are same-batch correctness fixes.
+> **0.9.0 is released and no consumer has moved yet.** Every pinned consumer is on
+> `v0.7.0`; 0.8.0 (2026-09-11) is tagged at `553893e`, and consumers on `v0.7.0`
+> move to `v0.9.0` in one step, since 0.9.0 carries 0.8.0's changes (see
+> "Migrating to 0.9.0"). aqua-suite joins as a new consumer in that batch. The
+> 0.8.0 companion PRs (`inblockio/aqua-node` #41 and #42, `inblockio/aquafier-rs`
+> #192 and #193; #41 and #192 are hard prerequisites for `did:aqua`) still
+> belong to the batch.
 
 ## Release tags
 
@@ -25,8 +24,8 @@ Releases are annotated `vX.Y.Z` tags. The version is semver for the **crate API*
 and is separate from the wire/spec version; the tag message states the spec
 version. `CheckPoint.*` tags are historical: no new ones are created, and the
 existing ones are never moved or deleted, so consumers pinned to them stay valid
-until they move. `main` is at 0.8.0 and untagged; the next release tag will be
-`v0.8.0` (or higher) when it is cut.
+until they move. The crate is at 0.9.0, tagged `v0.9.0`; `v0.8.0` is tagged
+at `553893e` and 0.9.0 carries its changes.
 
 ## The rule: all consumers move together
 
@@ -51,10 +50,10 @@ So:
    behind `#[cfg(feature = ...)]` rather than as a version conflict. The repo
    is named `aqua-auth`; `aqua-rs-auth` is the old name and now only a GitHub
    redirect (verified 2026-09-11: it answers `301` to `.../aqua-auth`). Every
-   consumer below still pins the `aqua-rs-auth` spelling, which keeps working
-   through the redirect, so do **not** modernise one repo's URL on its own --
-   switching spellings forks the cargo source exactly as above. Move them all
-   in one batch or leave them all alone.
+   pinned consumer now spells it `https://github.com/inblockio/aqua-auth`,
+   byte-identical (verified 2026-10-08). Keep it that way: a new consumer
+   copies this exact string, and a spelling change moves every repo in one
+   batch or none.
 3. **Declare every feature you use.** Cargo unions features across a dependency
    graph, so a crate can compile against a feature a *sibling* declared. That
    compiles today and breaks the moment the sibling drops the feature. See
@@ -64,11 +63,12 @@ So:
 
 | Repo | Pin | URL spelling | Features | Notes |
 |---|---|---|---|---|
-| aqua-node | `tag = "CheckPoint.20260817"` | `ssh://` | `http`, `redis`, `webauthn`, `ceremony` | Primary server-side consumer. Locked at `7d227b5` (0.4.0). |
-| aquafier-rs | `tag = "CheckPoint.20260817"` | `ssh://` | `http`, `webauthn`, `ceremony`, `redis` | Locked at `7d227b5` (0.4.0). `redis` added 2026-08-30, see below. |
-| aqua-state-viewer | `tag = "CheckPoint.20260521"` | `ssh://` | `client` | Locked at `056cb34` (0.2.0). Four tags behind. |
-| siwx-oidc (root) | `tag = "v0.7.0"` | `https://` | `webauthn`, `ceremony`, `redis` | Pinned 2026-09-11 (`5762aa0`), was unpinned. |
+| aqua-node | `tag = "v0.7.0"` | `https://` | `http`, `redis`, `webauthn`, `ceremony`; `client` added in `aqua-analytics`; `aqua-node-client` takes `http`, `client` | Primary server-side consumer. Verified at `65c6e8b3da` (aqua-node v0.1.12). |
+| aquafier-rs | `tag = "v0.7.0"` | `https://` | `http`, `webauthn`, `ceremony`, `redis` | Verified at `c9c35e9fdf`. `redis` declared explicitly since 2026-08-30, see below. |
+| aqua-state-viewer | `tag = "v0.7.0"` | `https://` | `client` | Verified at `8af1e29`. |
+| siwx-oidc (root) | `tag = "v0.7.0"` | `https://` | `webauthn`, `ceremony`, `redis` | Verified at `85df10c3e4`; pinned since 2026-09-11 (`5762aa0`). CI builds with `-Dwarnings`. |
 | siwx-oidc-auth | `tag = "v0.7.0"` | `https://` | (default) | Same workspace as above, so it also sees the union. |
+| aqua-suite | **not yet a consumer** (none at `e274a8b35a`) | `https://` (to be) | `webauthn` only | Joins with 0.9.0 for store-free passkey login. Keeps its own `webauthn-rs` 0.5; must not enable `ceremony` (pins `webauthn-rs =0.6.1-dev`). |
 | aqua-agents | **transitive only**, via `siwx-oidc-auth` | `https://` (inherited) | (default; no `client`) | Not a direct consumer, but this crate is in its lock graph and it wants `client`. See below. |
 | aqua-timestamps | `path = "../aqua-auth"` | n/a | `http`, `client` | **Orphaned.** See below. |
 
@@ -112,13 +112,13 @@ the 0.5.0 `Signer` migration.
 
 ### siwx-oidc
 
-The only consumer on `https://` and the only one with **no tag**. It is held at
-`056cb34` by its `Cargo.lock` alone, so a bare `cargo update` moves it from
-0.2.0 to whatever `main` currently is, across four minor versions of breaking
-changes, with no review step. It should be pinned to a tag like everyone else.
+Pinned to `v0.7.0` since 2026-09-11 (`5762aa0`); before that it had no tag
+and was held only by its `Cargo.lock`. Its CI builds with `-Dwarnings`; it
+calls no deprecated item at `85df10c3e4`.
 
-Its whole workspace does compile clean against 0.6.0 (verified 2026-08-30 via
-a local `[patch]`), so the drift is source-compatible today. Pin it anyway.
+The analysis below dates from 2026-08-30. siwx-oidc has since enabled
+`ceremony` (table above), so the version-resolution bullet no longer holds as
+written; the storage bullet still does. Not re-audited for 0.9.0.
 
 It uses `webauthn` (the standalone assertion verifier, already shared) and its
 own local WebAuthn ceremony over `webauthn-rs`. Consolidating that ceremony
@@ -152,9 +152,9 @@ default features and no `client`.
 Meanwhile `aqua-agents/crates/aqua-node-client` hand-rolls the CAIP-122 login
 this crate has shipped behind `client` since 0.2.0, including its own `did:key`
 encoder and its own PKCS#8 loader. It cannot simply switch the feature on until
-the URL spellings converge (rule 2 above): it inherits the `https://` source
-from siwx-oidc-auth, while aqua-node and aquafier-rs use `ssh://`, so adding a
-second declaration here would build this crate twice with features unmerged.
+the URL spellings converged (rule 2 above). They have: every direct consumer
+now uses the `https://` spelling it inherits from siwx-oidc-auth, so that
+blocker is gone (not re-checked in aqua-agents itself).
 
 Recorded so the next tag batch includes it. Nothing to do in this repo.
 
@@ -243,3 +243,54 @@ no source change at all.
 - **The `redis` feature now enables `redis/tokio-comp` and
   `redis/connection-manager`.** If you also depend on the `redis` crate
   directly, both unify into your build.
+
+## Migrating to 0.9.0
+
+Additive: nothing in 0.9.0 changes an existing signature or wire shape. A
+consumer that does not use passkeys moves by changing the tag alone. Because
+consumers skip `v0.8.0`, the move from `v0.7.0` also brings 0.8.0's changes; the
+one that shows is the `verify_caip122` deprecation warning, at the call sites in
+aquafier-rs (`crates/aquafier-auth/src/routes.rs:82` at `c9c35e9fdf`) and
+aqua-node (`crates/aqua-mgmt/src/routes.rs:207` at `65c6e8b3da`).
+
+- **The batch.** Cut `v0.9.0`, then move aqua-node, aquafier-rs, siwx-oidc
+  (root and `siwx-oidc-auth`) and aqua-state-viewer from `tag = "v0.7.0"` to
+  `tag = "v0.9.0"` together, and add aqua-suite in the same batch (rule 1).
+  aquafier-rs also takes aqua-node crates, so a mismatch between those two is
+  a compile error.
+- **Store-free passkey login** needs only `webauthn`. Read SPEC section 12
+  before wiring it: a principal comes only from `verify_and_recover` plus
+  `select` / `PendingRecovery::resolve`, never from a registration response.
+- **aqua-suite** joins with exactly
+  `aqua-auth = { git = "https://github.com/inblockio/aqua-auth", tag = "v0.9.0", features = ["webauthn"] }`.
+  It keeps its own `webauthn-rs` 0.5 and must not enable `ceremony`.
+- **Tests** use the software passkey as a dev-dependency feature:
+  `aqua-auth = { git = "https://github.com/inblockio/aqua-auth", tag = "v0.9.0", features = ["webauthn", "webauthn-testkit"] }`.
+  Never enable `webauthn-testkit` in a normal dependency: its keys are seeded
+  and public.
+
+### Building against an untagged checkout (local only)
+
+Until the tag exists, point the git source at a local checkout with a cargo
+config file passed on the command line, so no tracked file changes:
+
+```toml
+# e.g. ~/passkey-e2e/patches/<repo>.toml: never committed
+[patch."https://github.com/inblockio/aqua-auth"]
+aqua-auth = { path = "/absolute/path/to/an/aqua-auth/checkout" }
+```
+
+```sh
+cargo --config /absolute/path/to/patch.toml test
+cargo --config /absolute/path/to/patch.toml tree -i aqua-auth   # shows the path source
+```
+
+- The patch key is the dependency's URL string, byte for byte; one entry
+  covers every crate in the graph that names that URL (aqua-node's crates
+  inside aquafier-rs included).
+- Patch from one checkout only. The committed dependency line keeps its
+  existing spelling and tag; it builds only through the patch until the tag is
+  cut, which blocks merging that branch.
+- A patched build rewrites `Cargo.lock`. Before every commit run
+  `git diff --quiet -- Cargo.lock || git checkout -- Cargo.lock`, and never
+  commit a `[patch]` table, a patched lock or a vendored copy.

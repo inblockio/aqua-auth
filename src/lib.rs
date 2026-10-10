@@ -43,7 +43,9 @@ pub use did::{
 };
 pub use did_format::validate_did_well_formed;
 pub use did_method::{all_did_methods, find_did_method, DIDMethod};
-pub use key::{ed25519_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite};
+pub use key::{
+    ed25519_pubkey_from_did_key, p256_pubkey_from_did_key, Ed25519Suite, KeyMethod, P256Suite,
+};
 pub use peer::PeerMethod;
 pub use pkh::{Eip155Suite, PkhMethod};
 pub use principal::{authenticate, authenticate_with_public_key, Principal};
@@ -113,6 +115,47 @@ pub use http_sig::{
 pub mod webauthn;
 #[cfg(feature = "webauthn")]
 pub use webauthn::{verify_webauthn_assertion, WebAuthnAssertionParams};
+
+// Store-free passkey login (0.9.0): which RPs and origins an assertion may
+// come from, independent of any credential store.
+#[cfg(feature = "webauthn")]
+pub mod webauthn_policy;
+#[cfg(feature = "webauthn")]
+pub use webauthn_policy::{AssertionPolicy, AssertionPolicyBuilder, PolicyError, RpEntry};
+#[cfg(feature = "webauthn")]
+pub mod webauthn_recover;
+#[cfg(feature = "webauthn")]
+pub use webauthn_recover::{
+    verify_and_recover, AssertionError, AssertionJson, AssertionResponseJson, ExpectedChallenge,
+    RecoveredAssertion,
+};
+#[cfg(feature = "webauthn")]
+pub mod webauthn_select;
+#[cfg(feature = "webauthn")]
+pub use webauthn_select::{DidHint, PendingRecovery, SelectedBy, Selection, SelectionError};
+#[cfg(feature = "webauthn")]
+pub mod webauthn_hint;
+#[cfg(feature = "webauthn")]
+pub use webauthn_hint::{
+    hint_clear_cookie, hint_set_cookie, hints_from_cookie_header, HintCookieConfig,
+    HINT_COOKIE_NAME,
+};
+#[cfg(feature = "webauthn")]
+pub mod login_challenge;
+#[cfg(feature = "webauthn")]
+pub use login_challenge::{derive_login_challenge, LoginChallengeError, LOGIN_CHALLENGE_TAG};
+#[cfg(feature = "webauthn")]
+pub mod webauthn_options;
+#[cfg(feature = "webauthn")]
+pub use webauthn_options::{
+    creation_options, request_options, CreationOptionsJson, RequestOptionsJson, PASSKEY_USER_NAME,
+};
+// Test support for consumers (feature `webauthn-testkit`, dev-dependencies
+// only): a seeded software passkey. This crate's own unit tests use it too.
+#[cfg(all(feature = "webauthn", any(test, feature = "webauthn-testkit")))]
+pub mod webauthn_testkit;
+#[cfg(feature = "webauthn-testkit")]
+pub use webauthn_testkit::{AssertOpts, SoftPasskey};
 
 // Credential store (the persistence half of passkey support). The trait +
 // in-memory backend need no `redis`; the Redis backend adds it.

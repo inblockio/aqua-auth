@@ -110,6 +110,39 @@ pub fn ed25519_pubkey_from_did_key(did: &str) -> Result<[u8; 32], CryptoError> {
     }
 }
 
+/// Extract the 33-byte compressed SEC1 P-256 public key from a
+/// `did:key:zDn...` DID.
+///
+/// The P-256 twin of [`ed25519_pubkey_from_did_key`] and the inverse of
+/// [`crate::did::p256_did_key_from_pubkey`]. The key is validated as a point on
+/// the curve, so an `Ok` value always decodes to a usable verifying key. The
+/// `did:pkh:p256:0x{hex}` spelling is a distinct principal (#182) with its own
+/// parser, [`crate::did::pubkey_from_p256_did`]; this one accepts `did:key`
+/// only.
+pub fn p256_pubkey_from_did_key(did: &str) -> Result<[u8; 33], CryptoError> {
+    let z_body = did
+        .strip_prefix("did:key:z")
+        .ok_or_else(|| CryptoError::InvalidDid(format!("expected did:key DID: {did}")))?;
+    let raw = match decode_multibase_key(z_body)? {
+        KeyType::P256(raw) => raw,
+        other => {
+            return Err(CryptoError::InvalidDid(format!(
+                "expected a P-256 did:key, got {}",
+                key_type_label(&other)
+            )))
+        }
+    };
+    let compressed: [u8; 33] = raw.as_slice().try_into().map_err(|_| {
+        CryptoError::InvalidDid(format!(
+            "P-256 did:key must carry a 33-byte compressed point, got {} bytes",
+            raw.len()
+        ))
+    })?;
+    ::p256::PublicKey::from_sec1_bytes(&compressed)
+        .map_err(|_| CryptoError::InvalidDid("P-256 did:key is not a point on the curve".into()))?;
+    Ok(compressed)
+}
+
 pub(crate) fn key_type_label(key: &KeyType) -> &'static str {
     match key {
         KeyType::Ed25519(_) => "Ed25519",
@@ -296,6 +329,55 @@ mod tests {
         // (did::pubkey_from_ed25519_did); this one accepts did:key only.
         let did = format!("did:pkh:ed25519:0x{}", hex::encode([0xAAu8; 32]));
         assert!(ed25519_pubkey_from_did_key(&did).is_err());
+    }
+
+    #[test]
+    fn p256_did_key_roundtrip() {
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(0x0a0a_d1d0);
+        for _ in 0..64 {
+            let key = P256SigningKey::random(&mut rng);
+            let compressed: [u8; 33] = key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap();
+            let did = crate::did::p256_did_key_from_pubkey(&compressed);
+            assert!(did.starts_with("did:key:zDn"), "{did}");
+            assert_eq!(p256_pubkey_from_did_key(&did).unwrap(), compressed);
+        }
+    }
+
+    #[test]
+    fn p256_did_key_decoder_rejects_wrong_multicodec_length_and_off_curve() {
+        // An Ed25519 did:key is a valid DID of the wrong key type.
+        let ed = Ed25519SigningKey::generate(&mut OsRng);
+        assert!(p256_pubkey_from_did_key(&ed25519_did(&ed)).is_err());
+
+        // A P-256 multicodec prefix over a 34-byte body.
+        let mut long = P256_PREFIX.to_vec();
+        long.push(0x02);
+        long.extend_from_slice(&[0x11u8; 33]);
+        let did = format!("did:key:z{}", bs58::encode(&long).into_string());
+        assert!(p256_pubkey_from_did_key(&did).is_err());
+
+        // A well-formed compressed encoding whose x has no point on the curve:
+        // x = 1 gives x^3 - 3x + b, a quadratic non-residue mod p (checked with
+        // Euler's criterion outside this crate).
+        let mut off_curve = P256_PREFIX.to_vec();
+        off_curve.push(0x02);
+        let mut x = [0u8; 32];
+        x[31] = 1;
+        off_curve.extend_from_slice(&x);
+        let did = format!("did:key:z{}", bs58::encode(&off_curve).into_string());
+        assert!(p256_pubkey_from_did_key(&did).is_err());
+
+        // The did:pkh spelling is a separate principal with its own parser.
+        let key = P256SigningKey::random(&mut OsRng);
+        let compressed = key.verifying_key().to_encoded_point(true);
+        let pkh = format!("did:pkh:p256:0x{}", hex::encode(compressed.as_bytes()));
+        assert!(p256_pubkey_from_did_key(&pkh).is_err());
     }
 
     #[test]

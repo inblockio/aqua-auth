@@ -617,7 +617,8 @@ This specification does not cover:
 - Key rotation for the DID's signing key (the DID commits to the current
   public key, by embedding it for `did:key` / `did:pkh` / `did:peer` or by
   hashing it for `aqua`; either way rotation requires a new DID).
-- WebAuthn integration beyond what P-256 ECDSA natively supports.
+- WebAuthn beyond store-free P-256 passkey login (section 12): no
+  attestation verification, no algorithm other than ES256, no credential store.
 
 ---
 
@@ -704,3 +705,179 @@ document at `/.well-known/aqua-identity`. Boundary: public keys only, with
 validity windows and rotation overlap; private key custody stays with each
 service's `Signer`. The crate is versioned independently (0.x) so IETF draft
 churn never forces a version bump on `aqua-auth` itself.
+
+---
+
+## 12. Passkey login (WebAuthn)
+
+Since 0.9.0 a P-256 passkey logs in as the `did:key:zDn...` of its own public
+key, at every service whose policy lists its RP ID, with **no credential
+store**: the server recovers the public key from the assertion instead of
+looking it up. Everything here sits behind the `webauthn` feature and needs no
+webauthn-rs.
+
+| Module | Responsibility |
+|---|---|
+| `src/webauthn_policy.rs` | `AssertionPolicy`: RP IDs, their origins, `require_uv` |
+| `src/webauthn_recover.rs` | `verify_and_recover`: the checks (12.2) and recovery (12.3) |
+| `src/webauthn_select.rs` | `DidHint`, `RecoveredAssertion::select`, `PendingRecovery` (12.4) |
+| `src/webauthn_options.rs` | `creation_options`, `request_options` (12.5) |
+| `src/webauthn_hint.rs` | the `aqua_did_hint` cookie (12.6) |
+| `src/login_challenge.rs` | the derived login challenge (12.7) |
+| `src/webauthn_testkit.rs` | `SoftPasskey`, feature `webauthn-testkit` (12.9) |
+
+### 12.1 Identity
+
+The principal is the P-256 `did:key` (section 3, `p256`, `did:key` spelling)
+of the credential public key, and nothing else: not the credential ID, not
+the user handle, not a stored account. One passkey is one principal at every
+service under the same RP ID.
+
+### 12.2 Assertion checks
+
+`verify_and_recover(assertion, expected, policy)` refuses an assertion unless
+all of the following hold, each failure with its own `AssertionError`:
+
+1. **Structure** (`Malformed`): credential `type` is `public-key`; `id`
+   equals `rawId`; every binary member is base64url (padding optional);
+   authenticator data has at least 37 bytes; clientDataJSON is a JSON object
+   with no duplicated `type`, `challenge`, `origin` or `crossOrigin` member
+   and a boolean `crossOrigin` when present. Unknown members are ignored.
+2. **Type** (`WrongType`): `webauthn.get`.
+3. **Challenge** (`ChallengeMismatch`): equal to `ExpectedChallenge::Exact`,
+   or to the derived login challenge for `ExpectedChallenge::DerivedLogin`
+   (12.7).
+4. **RP ID** (`RpIdNotAllowed`): `rpIdHash` is SHA-256 of an RP ID in the
+   policy.
+5. **Origin** (`OriginNotAllowed`): exactly one of the origins listed for that
+   RP ID. Policy origins are stored in the browser's form (`scheme://host[:port]`,
+   lowercase host, default port omitted, no trailing slash), `https` only
+   except on `localhost` and `*.localhost`, each within its RP ID on a label
+   boundary. One origin
+   may be listed under several RP IDs; `rpIdHash` picks the entry.
+6. **Embedding** (`CrossOrigin`, `TopOriginPresent`): `crossOrigin` is not
+   `true` and `topOrigin` is absent.
+7. **User** (`UserPresenceMissing`, `UserVerificationMissing`): UP set; UV
+   set unless the policy was built with `require_uv(false)` (default true).
+8. **Signature** (`BadSignature`): an ASN.1 DER ECDSA P-256 signature from
+   which a key recovers.
+
+The legacy stored-key verifier `verify_webauthn_assertion` is unchanged and
+does not check UV or `crossOrigin`; store-free login never uses it.
+
+### 12.3 Recovery
+
+With `z = SHA-256(authenticatorData || SHA-256(clientDataJSON))` and the
+signature normalised to low-S, the verifier recovers the public key for both
+parities of R's y coordinate (x-reduced recovery ids are skipped: `r >= n`
+has probability about 2^-128). The result is two distinct keys the signature
+verifies under; the signer is one of them. Negating `s` swaps the two keys,
+so the set does not depend on the signature's s form. `RecoveredAssertion`
+exposes them only as `candidate_dids()`: a candidate is not a principal.
+
+### 12.4 Selection
+
+`RecoveredAssertion::select(hints, known)` picks the signer in this order:
+
+1. **Hint.** A `DidHint` (every `aqua_did_hint` cookie value, plus the key hint
+   a sign-up sends) that names exactly one candidate selects it. Hints naming
+   both candidates decide nothing. The hint outranks step 2.
+2. **Known principal.** Otherwise, if exactly one candidate is a principal the
+   service already knows (`known[i]` for `candidate_dids()[i]`, computed by the
+   consumer), it is selected.
+3. **Second assertion.** Otherwise `NeedSecondAssertion(PendingRecovery)`. The
+   server keeps the pending state server-side next to a fresh challenge and
+   asks, after an explicit click, for `get()` with `allowCredentials` set to
+   the first assertion's `rawId`. It verifies that assertion with
+   `ExpectedChallenge::Exact(second challenge)`; `PendingRecovery::resolve`
+   then requires the same credential ID (`CredentialMismatch`) and exactly
+   one candidate common to both assertions (`NoCommonCandidate` when none,
+   `Ambiguous` when both, i.e. the first assertion again).
+
+Every path ends on a key the signature verifies under, so a wrong or tossed
+hint cannot select another identity; at worst it forces step 2 or 3. A false
+accept would need an ECDSA forgery. `PendingRecovery` serialises as
+`{"candidates": ["did:key:zDn...", "did:key:zDn..."], "credential_id": "<base64url>"}`.
+
+### 12.5 Sign-up
+
+**A principal comes only from a verified assertion.** A registration
+response (attestation `none`) proves nothing about who holds the private key,
+so no service mints a session, cookie or principal from one; the ceremony
+feature's `FinishedRegistration::did` is documented as unproven.
+
+Sign-up is therefore options only:
+
+1. `creation_options(rp_id, rp_name, PASSKEY_USER_NAME, challenge)`: ES256
+   only, `residentKey: "required"`, `requireResidentKey: true`,
+   `userVerification: "required"`, `attestation: "none"`, `credProps`, and a
+   fresh random 32-byte `user.id` that ties the credential to no account.
+2. The browser runs `create()`.
+3. The client starts a login carrying `key_hint_spki_b64url`, the SPKI from
+   `response.getPublicKey()`; the server turns it into a hint with
+   `DidHint::from_spki_der`.
+4. `get()` with `allowCredentials: [rawId]` (`request_options`), then
+   `verify_and_recover` and `select` as in any login. The SPKI only selects:
+   if the client sent another key's SPKI, the hint names no candidate.
+
+`request_options` always asks for user verification and omits
+`allowCredentials` when it is empty (discoverable login).
+
+### 12.6 Hint cookie
+
+```text
+Set-Cookie: aqua_did_hint=did:key:zDn...; Domain=<rp_id>; Path=/; Max-Age=34560000; Secure; SameSite=Lax
+```
+
+Not `HttpOnly`: a front end that logs into a backend on another origin sets it
+from script after a verified login. For RP ID `localhost` the cookie is
+host-only (no `Domain`). Set it only after a verified passkey login
+(`hint_set_cookie`); clear it with `hint_clear_cookie` (`Max-Age=0`). Readers
+(`hints_from_cookie_header`) take every value of the name, drop anything that
+is not a canonical P-256 `did:key`, and use the rest only as selectors after a
+verified assertion. The hint never replaces or touches a session cookie.
+
+### 12.7 Derived login challenge
+
+For a front end logging into a backend that must not choose the bytes the
+passkey signs (aqua-explorer logging into aqua-node), the backend issues a
+32-byte nonce and the front end computes the challenge itself:
+
+```text
+challenge = SHA-256("aqua-auth/webauthn-login/v1" || nonce || origin(node base URL))
+```
+
+`origin` is the WHATWG serialization (`new URL(u).origin`): lowercase scheme
+and host, ASCII host, default port omitted, path, query, fragment and user
+info dropped. Only `http` and `https` URLs are accepted; anything else is
+refused (`LoginChallengeError::InvalidUrl`, `UnsupportedScheme`), and a
+TypeScript implementation refuses when `new URL(u)` throws or `u.protocol` is
+neither `http:` nor `https:`. The verifier passes
+`ExpectedChallenge::DerivedLogin { nonce, node_url }` with its own public base
+URL; an assertion over the raw nonce is a `ChallengeMismatch`, and an unusable
+`node_url` is the verifier's configuration error (`InvalidNodeUrl`). The tag's
+first byte is not `{`, so the preimage can never be an SDK signing input
+(canonical JSON): a backend cannot obtain a revision signature through login.
+
+Pinned vectors, computed outside the crate (origins with Node's `URL`, hashes
+with Python's `hashlib`) and shared with the TypeScript side:
+`tests/vectors/webauthn-derived-login-challenge.json`, schema
+`{description, tag_utf8, cases: [{name, nonce_hex, node_url, origin, challenge_hex}], rejected_node_urls: [string]}`.
+
+### 12.8 What a consumer stores
+
+Nothing per credential. A consumer holds its `AssertionPolicy`, the issued
+challenges (single use, short TTL), and the `PendingRecovery` of an
+unfinished first visit. The known principals for step 2 of 12.4 are
+whatever the service already keeps per DID.
+
+### 12.9 Test support
+
+Feature `webauthn-testkit` (dev-dependencies only; the keys come from small
+seeds and are public) exports `SoftPasskey` and `AssertOpts`. A
+`SoftPasskey` is a seeded P-256 credential that produces browser-shaped
+assertions with one knob per check in 12.2 (challenge, origin, flags,
+`crossOrigin`, RP ID, type) plus a high-S variant, `assert_raw` for exact
+bytes, the SPKI `getPublicKey()` returns, and a `RegistrationResponseJSON`
+with a `none` attestation. webauthn-rs accepts its registrations and
+assertions (checked under the `ceremony` feature).
