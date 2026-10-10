@@ -6,7 +6,7 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
-## [0.9.0] - untagged
+## [0.9.0] - 2026-10-10
 
 Store-free passkey login. A P-256 passkey logs in as the `did:key:zDn...` of
 its own public key at every service under the same RP ID, and no service needs
@@ -97,8 +97,7 @@ throughout; a consumer that does not use passkeys moves with the tag alone
   `Principal::from_trusted_did` now refuse DIDs they used to accept. None of
   those DIDs could ever have produced a verifying signature, so no legitimate
   caller is affected, which is why it ships in a minor release rather than a
-  patch release of its own (it landed after the 0.8.0 bump and before any tag,
-  so 0.9.0 carries it). The refusal set is also a strict subset of what
+  patch release of its own (it landed after the 0.8.0 bump, so 0.9.0 carries it). The refusal set is also a strict subset of what
   verification already refused, by construction rather than by review: each
   arm of `validate_did_well_formed()` calls the same parser the corresponding
   verifier calls first, so the new check cannot reject anything the crate

@@ -10,9 +10,9 @@ Last verified: **2026-10-08**, from each consumer's `Cargo.toml` at the commit
 named in the table (`git show <sha>:Cargo.toml`). The rows for aqua-agents and
 aqua-timestamps were not re-checked and date from 2026-08-30.
 
-> **0.9.0 is untagged and no consumer has moved.** Every pinned consumer is on
-> `v0.7.0`; 0.8.0 (2026-09-11) was never tagged either, so the next batch moves
-> `v0.7.0` to `v0.9.0` in one step and carries 0.8.0's changes with it (see
+> **0.9.0 is released and no consumer has moved yet.** Every pinned consumer is on
+> `v0.7.0`; 0.8.0 (2026-09-11) is tagged at `553893e`, and consumers on `v0.7.0`
+> move to `v0.9.0` in one step, since 0.9.0 carries 0.8.0's changes (see
 > "Migrating to 0.9.0"). aqua-suite joins as a new consumer in that batch. The
 > 0.8.0 companion PRs (`inblockio/aqua-node` #41 and #42, `inblockio/aquafier-rs`
 > #192 and #193; #41 and #192 are hard prerequisites for `did:aqua`) still
@@ -24,8 +24,8 @@ Releases are annotated `vX.Y.Z` tags. The version is semver for the **crate API*
 and is separate from the wire/spec version; the tag message states the spec
 version. `CheckPoint.*` tags are historical: no new ones are created, and the
 existing ones are never moved or deleted, so consumers pinned to them stay valid
-until they move. The crate is at 0.9.0 and untagged; the next release tag is
-`v0.9.0`, and `v0.8.0` will not be cut.
+until they move. The crate is at 0.9.0, tagged `v0.9.0`; `v0.8.0` is tagged
+at `553893e` and 0.9.0 carries its changes.
 
 ## The rule: all consumers move together
 
@@ -248,7 +248,7 @@ no source change at all.
 
 Additive: nothing in 0.9.0 changes an existing signature or wire shape. A
 consumer that does not use passkeys moves by changing the tag alone. Because
-`v0.8.0` was never cut, the move from `v0.7.0` also brings 0.8.0's changes; the
+consumers skip `v0.8.0`, the move from `v0.7.0` also brings 0.8.0's changes; the
 one that shows is the `verify_caip122` deprecation warning, at the call sites in
 aquafier-rs (`crates/aquafier-auth/src/routes.rs:82` at `c9c35e9fdf`) and
 aqua-node (`crates/aqua-mgmt/src/routes.rs:207` at `65c6e8b3da`).
