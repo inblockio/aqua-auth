@@ -4,11 +4,12 @@
 //! Encoding: `z` (base58btc multibase) + multicodec varint prefix + raw key bytes.
 
 use crate::{crypto_error::CryptoError, did_method::DIDMethod};
+use ::p256::ecdsa::signature::Verifier;
 use ::p256::{
     ecdsa::{Signature as P256Sig, VerifyingKey as P256Key},
     EncodedPoint,
 };
-use ed25519_dalek::{Signature as Ed25519Sig, Verifier, VerifyingKey as Ed25519Key};
+use ed25519_dalek::{Signature as Ed25519Sig, VerifyingKey as Ed25519Key};
 
 /// Multicodec varint for Ed25519 public key (0xED01).
 pub(crate) const ED25519_PREFIX: &[u8] = &[0xED, 0x01];
@@ -27,7 +28,13 @@ pub(crate) fn decode_multibase_key(z_body: &str) -> Result<KeyType, CryptoError>
         .into_vec()
         .map_err(|e| CryptoError::InvalidDid(format!("base58btc decode error: {e}")))?;
     if bytes.starts_with(ED25519_PREFIX) {
-        Ok(KeyType::Ed25519(bytes[ED25519_PREFIX.len()..].to_vec()))
+        let raw = bytes[ED25519_PREFIX.len()..].to_vec();
+        // A wrong length is reported by the callers; a 32-byte key must be a
+        // strict one.
+        if let Ok(key) = <&[u8; 32]>::try_from(raw.as_slice()) {
+            ed25519::strict_verifying_key(key)?;
+        }
+        Ok(KeyType::Ed25519(raw))
     } else if bytes.starts_with(P256_PREFIX) {
         Ok(KeyType::P256(bytes[P256_PREFIX.len()..].to_vec()))
     } else {
@@ -49,8 +56,7 @@ pub(crate) fn verify_with_key(
             let key_bytes: [u8; 32] = raw.try_into().map_err(|_| {
                 CryptoError::InvalidSignature("Ed25519 public key must be 32 bytes".to_string())
             })?;
-            let verifying_key = Ed25519Key::from_bytes(&key_bytes)
-                .map_err(|e| CryptoError::InvalidSignature(format!("invalid Ed25519 key: {e}")))?;
+            let verifying_key: Ed25519Key = ed25519::strict_verifying_key(&key_bytes)?;
             if signature.len() != 64 {
                 return Err(CryptoError::InvalidSignature(format!(
                     "Ed25519 signature must be 64 bytes, got {}",
@@ -59,7 +65,9 @@ pub(crate) fn verify_with_key(
             }
             let sig = Ed25519Sig::from_slice(signature)
                 .map_err(|e| CryptoError::InvalidSignature(format!("invalid Ed25519 sig: {e}")))?;
-            Ok(verifying_key.verify(message.as_bytes(), &sig).is_ok())
+            Ok(verifying_key
+                .verify_strict(message.as_bytes(), &sig)
+                .is_ok())
         }
         KeyType::P256(raw) => {
             let point = EncodedPoint::from_bytes(&raw).map_err(|e| {

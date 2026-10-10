@@ -38,6 +38,9 @@ pub fn address_from_did(did: &str) -> Result<[u8; 20], CryptoError> {
 }
 
 /// Extract the 32-byte Ed25519 public key from a `did:pkh:ed25519:0x{hex}` DID.
+///
+/// Refuses keys that are not points, are not canonically encoded, are weak,
+/// or carry a torsion component.
 pub fn pubkey_from_ed25519_did(did: &str) -> Result<[u8; 32], CryptoError> {
     let hex_str = did
         .strip_prefix("did:pkh:ed25519:0x")
@@ -49,9 +52,11 @@ pub fn pubkey_from_ed25519_did(did: &str) -> Result<[u8; 32], CryptoError> {
         )));
     }
     let bytes = hex::decode(hex_str)?;
-    bytes
+    let key: [u8; 32] = bytes
         .try_into()
-        .map_err(|_| CryptoError::InvalidDid("ed25519 pubkey must be 32 bytes".into()))
+        .map_err(|_| CryptoError::InvalidDid("ed25519 pubkey must be 32 bytes".into()))?;
+    crate::key::ed25519::strict_verifying_key(&key)?;
+    Ok(key)
 }
 
 /// Extract the 33-byte compressed P-256 public key from a `did:pkh:p256:0x{hex}` DID.
@@ -260,7 +265,8 @@ mod tests {
 
     #[test]
     fn identifier_from_did_ed25519() {
-        let pk_hex = hex::encode([0xAA; 32]);
+        let pk_hex =
+            hex::encode(curve25519_dalek::constants::ED25519_BASEPOINT_COMPRESSED.to_bytes());
         let did = format!("did:pkh:ed25519:0x{pk_hex}");
         let id = identifier_from_did(&did).unwrap();
         assert_eq!(id, format!("0x{pk_hex}"));
@@ -334,7 +340,7 @@ mod encode_tests {
     /// that both route through this module cannot disagree.
     #[test]
     fn ed25519_encode_round_trips_through_the_did_key_decoder() {
-        let ed = [7u8; 32];
+        let ed = curve25519_dalek::constants::ED25519_BASEPOINT_COMPRESSED.to_bytes();
         let did = ed25519_did_key_from_pubkey(&ed);
         assert!(did.starts_with("did:key:z6Mk"), "unexpected prefix: {did}");
         assert_eq!(crate::key::ed25519_pubkey_from_did_key(&did).unwrap(), ed);

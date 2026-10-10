@@ -63,6 +63,7 @@ dependencies = [
  "base64 0.21.7",
  "bs58",
  "chrono",
+ "curve25519-dalek",
  "dashmap",
  "ed25519-dalek",
  "hex",
