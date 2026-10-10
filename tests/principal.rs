@@ -68,8 +68,12 @@ fn from_trusted_did_accepts_recognised_methods_and_rejects_unknown() {
         "did:pkh:eip155 is a recognised method"
     );
     assert!(
-        Principal::from_trusted_did("did:key:z6MknSLrJoTcukLRyR5GLJ2BFqNaGMkHMGLLPT68F2nHZN7L")
-            .is_ok(),
+        Principal::from_trusted_did(&aqua_auth::ed25519_did_key_from_pubkey(
+            ed25519_dalek::SigningKey::from_bytes(&[1u8; 32])
+                .verifying_key()
+                .as_bytes()
+        ))
+        .is_ok(),
         "did:key is a recognised method"
     );
     assert!(

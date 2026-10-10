@@ -8,6 +8,13 @@ semver, staying below 1.0 while the crate is in active development.
 
 ### Fixed
 
+- **Ed25519 signatures are verified strictly, and weak or torsioned public keys are
+  refused.** Verification now uses `verify_strict()` on every path (`did:key`,
+  `did:pkh:ed25519`, `did:peer`). Decoding an Ed25519 key from a DID refuses
+  bytes that are not a curve point, non-canonical encodings, weak (small order)
+  keys and keys with a torsion component, returning `CryptoError::InvalidDid`.
+  Existing DIDs built from ordinary keys are unaffected.
+
 - **SPEC section 7 rule 5 ("DID well-formed") now has an enforcement layer of
   its own.** It had none: the only thing that ever rejected a malformed
   identifier was the signature-verification path incidentally failing to
