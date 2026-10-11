@@ -6,6 +6,34 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
+### Breaking (planned for the next breaking release)
+
+The shared Redis credential store is removed: `RedisWebauthnStore`
+(`src/redis_webauthn.rs`), the `redis` cargo feature with its optional `redis`
+dependency, and the `AQUA_WEBAUTHN_REDIS_URL` switch that consumers use to
+select it. Nothing replaces it. Each service keeps its own credential store,
+and passkey login across services under one RP ID needs no store (SPEC
+section 12). The credential trait `WebauthnCredentialBackend` and
+`InMemoryWebauthnStore` are unchanged.
+
+Consumers, when they adopt that release:
+
+- Remove `"redis"` from their `aqua-auth` feature list.
+- Delete the variable `AQUA_WEBAUTHN_REDIS_URL` from their configuration, and
+  any backfill or migration tooling that writes to the shared store.
+- siwx-oidc: `src/credential_store.rs`, `src/credential_migration.rs`,
+  `src/bin/migrate-credentials.rs`, and the call sites in `src/webauthn.rs`,
+  `src/db/redis.rs`, `src/axum_lib.rs` and `src/lib.rs`.
+- aquafier-rs: `crates/aquafier-auth/src/webauthn.rs` and the root
+  `Cargo.toml` feature list.
+- aqua-node: `crates/aqua-daemon/src/explorer_stubs/webauthn.rs`,
+  `crates/aqua-daemon/src/explorer_stubs/mod.rs`,
+  `crates/aqua-daemon/src/config.rs`, and the feature lists in the manifests
+  of `aqua-analytics`, `aqua-daemon`, `aqua-mgmt`, `aqua-node-api` and
+  `aqua-rest`.
+
+Per-repository map: https://github.com/inblockio/aqua-auth/issues/8
+
 ## [0.9.0] - 2026-10-10
 
 Store-free passkey login. A P-256 passkey logs in as the `did:key:zDn...` of
