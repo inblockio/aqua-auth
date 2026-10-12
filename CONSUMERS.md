@@ -81,8 +81,8 @@ backend, and it never enabled it: `[auth] session_backend` defaulted to
 `"memory"` and no deployment manifest anywhere defines a Redis service. That
 config key and its boot wiring were removed when the backend was cut in 0.6.0.
 
-It keeps `redis` for `RedisWebauthnStore`, the passkey credential store, which
-is genuinely deployed.
+It keeps `redis` for `RedisWebauthnStore` until it adopts the release that
+removes the store; see "Migrating past the shared credential store" below.
 
 Until 0.7.0 it also carried a **duplicate of this crate's credential store**:
 `WebauthnCredentialStore` in `crates/aqua-node-api/src/webauthn/store.rs`, an
@@ -294,3 +294,15 @@ cargo --config /absolute/path/to/patch.toml tree -i aqua-auth   # shows the path
 - A patched build rewrites `Cargo.lock`. Before every commit run
   `git diff --quiet -- Cargo.lock || git checkout -- Cargo.lock`, and never
   commit a `[patch]` table, a patched lock or a vendored copy.
+
+## Migrating past the shared credential store (next breaking release)
+
+`RedisWebauthnStore` and the `redis` feature are removed, with no
+replacement: each service keeps its own credential store, and store-free
+passkey login (SPEC section 12) needs none. Each consumer, when it adopts that
+release, drops `"redis"` from its feature list, deletes
+`AQUA_WEBAUTHN_REDIS_URL` from its configuration (unset it on the deployment
+first), and deletes the code paths and any backfill tooling that use the
+store. The per-repository list is in `CHANGELOG.md` under "Unreleased" and in
+issue #8. aquafier-rs takes aqua-node crates, so the two drop `redis` in the
+same batch (rule 1).

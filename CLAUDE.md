@@ -91,9 +91,6 @@ src/
   webauthn_testkit.rs # SoftPasskey, AssertOpts (seeded software passkey)
   webauthn_store.rs   # WebauthnCredentialBackend (async trait),
                       #   StoredCredential, InMemoryWebauthnStore
-  --- behind features "webauthn" + "redis" ---
-  redis_webauthn.rs   # RedisWebauthnStore (the shared production credential
-                      #   store; the only thing `redis` still compiles)
   --- behind feature "ceremony" (implies "webauthn") ---
   webauthn_ceremony.rs # register/login over webauthn-rs, passkey -> did:key
   --- behind feature "http-sig" (EXPERIMENTAL, tracks IETF draft) ---
@@ -136,19 +133,17 @@ replacement does not repeat that: `sessions_for_did` must be served from a
 `did -> tokens` index (the login path calls it), and `all()` is cold-path
 introspection only.
 
-Passkey credentials are separate and *are* persisted: `WebauthnCredentialBackend`
-(`webauthn_store.rs`) with `InMemoryWebauthnStore` and `RedisWebauthnStore`
-(`redis_webauthn.rs`), the store aqua-node and aquafier share in production.
+Passkey credentials are separate: `WebauthnCredentialBackend`
+(`webauthn_store.rs`) with `InMemoryWebauthnStore` as the only shipped
+implementation. Each service persists its credentials in its own store, the
+same rule as for sessions. The shared `RedisWebauthnStore` and the `redis`
+feature were removed after 0.9.0 (issue #8): passkey login at every service
+under one RP ID needs no shared store (SPEC section 12).
 
 That trait is **async** as of 0.7.0, and every method returns `Result`. It was
 sync in 0.6.0 on the grounds that it matched "this crate's blocking-Redis
 pattern", but 0.6.0 is the release that deleted `RedisBackend`, so the
-justification outlived its referent. `RedisWebauthnStore` now holds a
-`redis::aio::ConnectionManager` (features `redis/tokio-comp` +
-`redis/connection-manager`) instead of a `Mutex<redis::Connection>`, and
-`RedisWebauthnStore::connect` is `async`. The manager rather than a bare
-`MultiplexedConnection` because the latter never reconnects: one Redis restart
-would poison the store for the rest of the process lifetime.
+justification outlived its referent.
 
 ## Upstream Dependencies
 
@@ -164,7 +159,7 @@ build.
 - **aqua-node**: Primary server-side consumer
 - **aquafier-rs** (aqua-fire): Aquafier service
 - **aqua-state-viewer**: `client` feature
-- **siwx-oidc**: `webauthn`, `ceremony`, `redis`, pinned `v0.7.0`
+- **siwx-oidc**: `webauthn`, `ceremony` (and `redis` until it adopts the release that removes it), pinned `v0.7.0`
 - **aqua-suite**: `webauthn` only (store-free passkey login), joins with 0.9.0
 - **Mobile apps**: Client-side auth via the `client` feature
 - **Web apps and CLIs**: Any client connecting to an aqua-node
@@ -189,7 +184,6 @@ cargo build --features http       # Session/auth layer
 cargo build --features client     # HTTP client (implies http)
 cargo build --features webauthn   # passkey login (store-free) + legacy verifier
 cargo build --features ceremony   # register/login ceremony (implies webauthn)
-cargo build --features redis      # Redis credential store (implies webauthn)
 cargo build --features http-sig   # RFC 9421 request signatures (experimental)
 cargo test                        # Default-feature tests
 cargo test --features webauthn    # passkey unit tests (testkit compiled under cfg(test))
