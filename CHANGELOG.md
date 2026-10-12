@@ -6,7 +6,7 @@ semver, staying below 1.0 while the crate is in active development.
 
 ## [Unreleased]
 
-### Breaking (planned for the next breaking release)
+### Breaking
 
 The shared Redis credential store is removed: `RedisWebauthnStore`
 (`src/redis_webauthn.rs`), the `redis` cargo feature with its optional `redis`

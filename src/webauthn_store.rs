@@ -2,14 +2,13 @@
 //!
 //! The credential-persistence half of passkey support, split exactly like
 //! [`crate::session_backend`]: an **async** trait ([`WebauthnCredentialBackend`])
-//! with an in-memory default ([`InMemoryWebauthnStore`]) and, behind the
-//! `redis` feature, a Redis backend ([`crate::redis_webauthn::RedisWebauthnStore`]).
+//! with an in-memory default ([`InMemoryWebauthnStore`]). A durable backend
+//! lives in the consumer that owns it; the `ceremony` feature is written
+//! against the trait.
 //!
-//! Why here, and why one store: passkey credentials were persisted separately by
-//! each consumer (aqua-node in fjall, aquafier in Postgres), duplicating the
-//! ceremony around two divergent stores. Lifting the store into `aqua-auth` lets
-//! every consumer share ONE backend (in production, aqua-node's Redis), so a
-//! passkey registered once is usable everywhere the same Redis is reachable.
+//! The shared Redis backend (`RedisWebauthnStore`) was removed after 0.9.0:
+//! each service keeps its own credential store, and passkey login at every
+//! service under one RP ID needs no store at all (SPEC section 12).
 //!
 //! **Why async (0.7.0).** The trait shipped sync in 0.6.0, justified as matching
 //! "this crate's blocking-Redis pattern". That pattern was `RedisBackend`, which
@@ -121,8 +120,8 @@ pub trait WebauthnCredentialBackend: Send + Sync {
 
 /// In-memory default backend (the `DashMap`-free analogue of
 /// [`crate::session_backend::InMemoryBackend`]). Non-persistent: fine for tests
-/// and single-process dev, but production wants the Redis backend so a passkey
-/// survives restarts and is shared across instances.
+/// and single-process dev; production implements the trait over its own
+/// durable store so a passkey survives restarts.
 ///
 /// The `std::sync::Mutex` is deliberate: no guard is held across an `.await`
 /// (every critical section here is pure map work), so an async-aware mutex

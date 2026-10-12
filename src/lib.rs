@@ -157,8 +157,8 @@ pub mod webauthn_testkit;
 #[cfg(feature = "webauthn-testkit")]
 pub use webauthn_testkit::{AssertOpts, SoftPasskey};
 
-// Credential store (the persistence half of passkey support). The trait +
-// in-memory backend need no `redis`; the Redis backend adds it.
+// Credential store (the persistence half of passkey support): the trait and
+// an in-memory backend. A durable backend lives in the consumer that owns it.
 #[cfg(feature = "webauthn")]
 pub mod webauthn_store;
 #[cfg(feature = "webauthn")]
@@ -166,12 +166,6 @@ pub use webauthn_store::{
     CredentialId, InMemoryWebauthnStore, NewCredential, StoredCredential,
     WebauthnCredentialBackend, WebauthnStoreError,
 };
-
-// --- Behind `webauthn` + `redis` features ---
-#[cfg(all(feature = "webauthn", feature = "redis"))]
-pub mod redis_webauthn;
-#[cfg(all(feature = "webauthn", feature = "redis"))]
-pub use redis_webauthn::RedisWebauthnStore;
 
 // --- Behind `ceremony` feature (register/login over webauthn-rs) ---
 #[cfg(feature = "ceremony")]
