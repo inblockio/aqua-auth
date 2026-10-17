@@ -18,6 +18,15 @@ aqua-timestamps were not re-checked and date from 2026-08-30.
 > #192 and #193; #41 and #192 are hard prerequisites for `did:aqua`) still
 > belong to the batch.
 
+> **`did:aqua` identities change format in the next release (0.10.0).** The
+> derivation moves from a SHA3-256 multihash over a tagged preimage to the
+> RFC 7638 JWK Thumbprint (SHA-256) of the RFC 9964 AKP key, and the old
+> format is refused at validation. The public `MLDSA_87_PUB_CODEC` constants
+> are removed. No consumer listed here enables the gated `did-aqua` feature
+> (checked 2026-10-18), so none is affected, but one that turns it on must
+> use the new format. See
+> `CHANGELOG.md`.
+
 ## Release tags
 
 Releases are annotated `vX.Y.Z` tags. The version is semver for the **crate API**

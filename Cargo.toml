@@ -33,7 +33,7 @@ local-key = ["ed25519-dalek/pkcs8", "ed25519-dalek/pem", "p256/pkcs8", "p256/pem
 # a whole additional signature stack (`ml-dsa`), and a deployment with no
 # post-quantum identities should not have to build or audit it. The three
 # classical namespaces stay unconditional and MUST NOT be gated.
-did-aqua = ["dep:ml-dsa"]
+did-aqua = ["dep:ml-dsa", "dep:sha2", "dep:base64"]
 # RFC 9421 per-request HTTP message signatures. EXPERIMENTAL: tracks an IETF
 # draft (see `src/http_sig/mod.rs`), so it is exempt from the crate's semver
 # stability promise until the draft settles.

@@ -185,9 +185,10 @@ pub fn eip155() -> Arc<dyn Signer> {
 /// ML-DSA-87 under the `did:aqua` content-addressed spelling (PCA-0017).
 ///
 /// The sixth spelling, and the only one whose verifier needs the public key
-/// supplied alongside the signature: `did:aqua` commits to the key by
-/// SHA3-256 and ML-DSA has no public-key recovery, so the key travels on the
-/// wire and is bound back to the DID at verification.
+/// supplied alongside the signature: `did:aqua` commits to the key by its
+/// RFC 7638 JWK Thumbprint (SHA-256) and ML-DSA has no public-key recovery,
+/// so the key travels on the wire and is bound back to the DID at
+/// verification.
 pub struct MlDsa87Local {
     key: ml_dsa::SigningKey<ml_dsa::MlDsa87>,
     public_key: Vec<u8>,

@@ -3,6 +3,11 @@
 **Status:** not started. Phase 1 (authentication) landed in `aqua-auth` on
 2026-09-11 and is feature-gated behind `did-aqua`.
 
+**Identity format:** `did:aqua` is the RFC 7638 JWK Thumbprint (SHA-256) of
+the RFC 9964 AKP key as a `0x12 0x20` multihash (PCA-0017 v0.11.0 section
+2.3). Nothing in Phase 2 depends on the old SHA3-256 form, which is refused
+at validation; wherever this document says "hash", read that construction.
+
 **Who this is for:** whoever picks up post-quantum identity support next. You
 do not need to have been in the Phase 1 session. Everything needed is below.
 

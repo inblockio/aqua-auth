@@ -51,8 +51,8 @@ use crate::crypto_error::CryptoError;
 use crate::did_method::DIDMethod;
 
 pub use codec::{
-    aqua_did_binds_pubkey, aqua_did_from_pubkey, multihash_from_aqua_did, MLDSA_87_PUB_CODEC,
-    MLDSA_87_PUB_CODEC_VARINT, ML_DSA_87_PUBLIC_KEY_BYTES,
+    aqua_did_binds_pubkey, aqua_did_from_pubkey, multihash_from_aqua_did,
+    ML_DSA_87_PUBLIC_KEY_BYTES,
 };
 pub use ml_dsa::{hint_encoding_is_canonical, HintDefect, ML_DSA_87_SIGNATURE_BYTES};
 

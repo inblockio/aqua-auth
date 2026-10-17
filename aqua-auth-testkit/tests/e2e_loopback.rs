@@ -181,9 +181,9 @@ async fn real_client_logs_in_as_eip155() {
 /// The post-quantum namespace over the same shipped client path.
 ///
 /// This is the only spelling whose login carries a public key, because
-/// `did:aqua` commits to an ML-DSA-87 key by SHA3-256 and the scheme has no
-/// public-key recovery: the verifier can reach the key neither through the
-/// DID nor through the signature. Proving it here rather than only in unit
+/// `did:aqua` commits to an ML-DSA-87 key by RFC 7638 thumbprint and the
+/// scheme has no public-key recovery: the verifier can reach the key neither
+/// through the DID nor through the signature. Proving it here rather than only in unit
 /// tests is the point, since the key has to survive the real client, real
 /// JSON, and a real socket to be worth anything.
 #[tokio::test]
