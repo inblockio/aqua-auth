@@ -1,19 +1,27 @@
 //! `did:aqua` identifier construction and grammar validation (PCA-0017
-//! Section 2.3).
+//! v0.11.0 Section 2.3).
 //!
-//! `did:aqua` is a content-addressed public-key-hash DID: the identifier
-//! commits to a `(scheme, key)` pair through a multihash of a tagged
-//! preimage, and carries no key material. It is the hash-of-key analogue of
-//! `did:pkh`, generalized off the blockchain account namespace so an
-//! arbitrarily large public key gets a fixed 56-character identity.
+//! `did:aqua` is a content-addressed public-key-hash DID: the identifier is
+//! the RFC 7638 JWK Thumbprint (SHA-256) of the RFC 9964 AKP form of the
+//! key, wrapped as a multihash. It commits to a `(scheme, key)` pair and
+//! carries no key material. It is the hash-of-key analogue of `did:pkh`,
+//! generalized off the blockchain account namespace so an arbitrarily large
+//! public key gets a fixed 56-character identity.
 //!
 //! ```text
-//! tag    = varint(MLDSA_87_PUB_CODEC)   # 0x92 0x24
-//! digest = SHA3-256(tag || pk)          # always SHA3-256
-//! mh     = 0x16 || 0x20 || digest       # multihash: sha3-256, length 32
+//! jwk    = '{"alg":"ML-DSA-87","kty":"AKP","pub":"' + base64url_nopad(pk) + '"}'
+//!          # members in lexicographic order, no whitespace; pk = the
+//!          # 2592-byte FIPS 204 pkEncode
+//! digest = SHA-256(UTF-8 bytes of jwk)    # the RFC 7638 thumbprint
+//! mh     = 0x12 || 0x20 || digest         # multihash: sha2-256, length 32
 //! id     = "z" || base58btc(mh)
 //! did    = "did:aqua:" || id
 //! ```
+//!
+//! The scheme is bound by `kty` and `alg` inside the hashed JSON, so no
+//! separate multicodec tag enters the preimage. Two schemes that shared a
+//! key encoding would still mint different identities, because their `alg`
+//! members differ.
 //!
 //! # Why this is reimplemented rather than imported
 //!
@@ -21,31 +29,26 @@
 //! `aqua_rs_sdk::primitives::did_aqua`. This crate deliberately depends on no
 //! Aqua crate, so that an auth verifier never inherits the SDK's pin (ruling,
 //! 2026-09-11). The cost is a second producer of an identity string, which is
-//! the failure that cost a day on 2026-09-09, so the mitigation is that
-//! [`tests::pca0017_section_5_1_vector`] pins this implementation to PCA-0017
-//! Section 5.1's published vector byte-for-byte. If the two ever disagree,
-//! that test fails here rather than a signature failing in production.
+//! the failure that cost a day on 2026-09-09, so the mitigation is that the
+//! known-answer vectors in this module's tests (the all-zero key, the NIST ACVP
+//! ML-DSA-87 `sigGen` key and a key generated from a fixed seed) pin this
+//! implementation byte-for-byte to the values the SDK produces and to an
+//! independent Python and OpenSSL reference. If the two ever disagree, those
+//! tests fail here rather than a signature failing in production.
 //!
-//! The only structural deviation from the SDK: the SDK routes through its
-//! general PCA-0015 `multihash_decode` and then checks the code and length,
-//! whereas this module checks the 34-byte `0x16 0x20` header directly. For
-//! the one construction PCA-0017 defines these are equivalent, because both
-//! the code and the length are single-byte varints whose minimal encoding is
-//! the byte itself, and the total length is fixed. A future `did:aqua`
-//! construction (a new PCA) would need the general decoder.
+//! The one remaining difference from the SDK's source is shape, not
+//! behaviour: this module checks the fixed 34-byte `0x12 0x20` header
+//! directly, and the SDK now does the same rather than going through its
+//! general PCA-0015 `multihash_decode`. For the one construction PCA-0017
+//! defines the direct check is exact, because both the code and the length
+//! are single-byte varints whose minimal encoding is the byte itself, and the
+//! total length is fixed. A future `did:aqua` construction (a new PCA) would
+//! need a general multihash decoder.
 
 use crate::crypto_error::CryptoError;
-use sha3::{Digest, Sha3_256};
-
-/// The `mldsa-87-pub` key-type multicodec code (PCA-0017 Section 2.3,
-/// point 1). Pinned normatively by the PCA: if the upstream multiformats
-/// registry ever renumbers it, this value still governs `did:aqua`.
-pub const MLDSA_87_PUB_CODEC: u16 = 0x1212;
-
-/// The unsigned-varint encoding of [`MLDSA_87_PUB_CODEC`], exactly two
-/// bytes. A literal rather than a computed value so a general-purpose
-/// varint encoder changing elsewhere cannot silently move every identity.
-pub const MLDSA_87_PUB_CODEC_VARINT: [u8; 2] = [0x92, 0x24];
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
 
 /// FIPS 204 ML-DSA-87 `pkEncode` length.
 pub const ML_DSA_87_PUBLIC_KEY_BYTES: usize = 2592;
@@ -53,13 +56,13 @@ pub const ML_DSA_87_PUBLIC_KEY_BYTES: usize = 2592;
 const DID_AQUA_PREFIX: &str = "did:aqua:";
 
 /// `did:aqua:` (9) + `z` (1) + 46 base58btc characters. Constant, not
-/// typical: the leading multihash byte is the fixed nonzero `0x16`, which
+/// typical: the leading multihash byte is the fixed nonzero `0x12`, which
 /// precludes base58 leading-`1` padding and pins the digit count for every
-/// possible digest (PCA-0017 Section 2.3).
+/// possible digest, so the body always starts `zQm` (PCA-0017 Section 2.3).
 const DID_AQUA_LEN: usize = 56;
 
-/// Multihash code `0x16` = sha3-256 (PCA-0015 Section 3.1).
-const MULTIHASH_SHA3_256: u8 = 0x16;
+/// Multihash code `0x12` = sha2-256, the RFC 7638 thumbprint hash.
+const MULTIHASH_SHA2_256: u8 = 0x12;
 
 /// Multihash digest length `0x20` = 32 bytes.
 const MULTIHASH_DIGEST_LEN: u8 = 0x20;
@@ -69,22 +72,26 @@ const MULTIHASH_LEN: usize = 34;
 
 /// Encode an ML-DSA-87 public key as its `did:aqua` identity.
 ///
-/// The identity hash is always SHA3-256, independent of any revision hash
-/// algorithm in force elsewhere (PCA-0017 Section 2.3, point 3).
+/// The identity is the RFC 7638 JWK Thumbprint (SHA-256) of the RFC 9964
+/// AKP key, as a sha2-256 multihash (PCA-0017 v0.11.0 Section 2.3). The JSON
+/// is built by hand rather than serialized: RFC 7638 fixes the exact bytes
+/// (members in lexicographic order, no whitespace), and a serializer's
+/// formatting choices must not be able to move an identity.
 ///
 /// `pubkey` is expected to be [`ML_DSA_87_PUBLIC_KEY_BYTES`] long. This
 /// function does not enforce that, mirroring the SDK: callers building a
 /// signer identity are responsible for the length, and
 /// [`aqua_did_binds_pubkey`] is the checked entry point for verification.
 pub fn aqua_did_from_pubkey(pubkey: &[u8]) -> String {
-    let mut preimage = Vec::with_capacity(MLDSA_87_PUB_CODEC_VARINT.len() + pubkey.len());
-    preimage.extend_from_slice(&MLDSA_87_PUB_CODEC_VARINT);
-    preimage.extend_from_slice(pubkey);
+    let jwk = format!(
+        r#"{{"alg":"ML-DSA-87","kty":"AKP","pub":"{}"}}"#,
+        URL_SAFE_NO_PAD.encode(pubkey)
+    );
 
-    let digest = Sha3_256::digest(&preimage);
+    let digest = Sha256::digest(jwk.as_bytes());
 
     let mut mh = Vec::with_capacity(MULTIHASH_LEN);
-    mh.push(MULTIHASH_SHA3_256);
+    mh.push(MULTIHASH_SHA2_256);
     mh.push(MULTIHASH_DIGEST_LEN);
     mh.extend_from_slice(&digest);
 
@@ -102,11 +109,14 @@ pub fn aqua_did_from_pubkey(pubkey: &[u8]) -> String {
 /// 3. the literal `did:aqua:` prefix
 /// 4. the identifier begins with the single multibase prefix `z`
 /// 5. the remainder decodes as base58btc
-/// 6. the decoded bytes are 34 long with code `0x16` and length `0x20`
+/// 6. the decoded bytes begin with the multihash code `0x12` (sha2-256),
+///    then the length byte `0x20`, and are exactly 34 bytes long
 ///
-/// A `did:aqua` whose multihash carries any other code or length belongs to
-/// no construction any PCA has defined and is rejected rather than accepted
-/// as an opaque identity.
+/// The code is checked first, so an identity in the superseded format (a
+/// `0x16` sha3-256 multihash over a tagged preimage) is refused with an
+/// error that names the expected code. A `did:aqua` whose multihash carries
+/// any other code or length belongs to no construction any PCA has defined
+/// and is rejected rather than accepted as an opaque identity.
 pub fn multihash_from_aqua_did(did: &str) -> Result<[u8; MULTIHASH_LEN], CryptoError> {
     let bad = |why: &str| CryptoError::InvalidDid(format!("did:aqua: {why}"));
 
@@ -135,17 +145,24 @@ pub fn multihash_from_aqua_did(did: &str) -> Result<[u8; MULTIHASH_LEN], CryptoE
         .into_vec()
         .map_err(|_| bad("non-base58btc characters or decode failure"))?;
 
+    // Code first, then length byte, then total length: an old-format
+    // `0x16` body must fail on the code, whatever else is true of it.
+    if raw.first() != Some(&MULTIHASH_SHA2_256) {
+        return Err(bad(
+            "wrong multihash code (expected 0x12 / sha2-256, the RFC 7638 thumbprint hash)",
+        ));
+    }
+    if raw.get(1) != Some(&MULTIHASH_DIGEST_LEN) {
+        return Err(bad("wrong digest length (expected 0x20 / 32 bytes)"));
+    }
+    // With a leading `0x12` and a 46-character body this cannot fail (a
+    // 33-byte value that long needs a first byte of at least 0xC2, and a
+    // 35-byte one needs 47 characters), so it is a guard against the
+    // grammar checks above ever being loosened, not a reachable path.
     let mh: [u8; MULTIHASH_LEN] = raw
         .as_slice()
         .try_into()
         .map_err(|_| bad("multihash is not 34 bytes"))?;
-
-    if mh[0] != MULTIHASH_SHA3_256 {
-        return Err(bad("wrong multihash code (expected 0x16 / sha3-256)"));
-    }
-    if mh[1] != MULTIHASH_DIGEST_LEN {
-        return Err(bad("wrong digest length (expected 0x20 / 32 bytes)"));
-    }
 
     Ok(mh)
 }
@@ -178,55 +195,141 @@ pub fn aqua_did_binds_pubkey(did: &str, pubkey: &[u8]) -> Result<bool, CryptoErr
 mod tests {
     use super::*;
 
-    /// PCA-0017 Section 5.1, verbatim. This is the contract between this
-    /// crate and the SDK: both implementations independently reproduce this
-    /// string or one of them is wrong.
+    /// Known-answer vector 1, the all-zero key. The expected values come
+    /// from an independent Python (stdlib) and OpenSSL 3.5 reference, not
+    /// from this implementation, and the SDK reproduces them too: both
+    /// implementations produce this string or one of them is wrong.
     #[test]
-    fn pca0017_section_5_1_vector() {
+    fn known_answer_zero_key() {
         let pk = vec![0u8; ML_DSA_87_PUBLIC_KEY_BYTES];
 
-        let mut preimage = Vec::new();
-        preimage.extend_from_slice(&MLDSA_87_PUB_CODEC_VARINT);
-        preimage.extend_from_slice(&pk);
+        // The hashed JSON is 3496 bytes: a 38-byte opening, 3456 base64url
+        // characters for 2592 bytes (no padding) and the 2-byte closing `"}`.
+        let jwk = format!(
+            r#"{{"alg":"ML-DSA-87","kty":"AKP","pub":"{}"}}"#,
+            URL_SAFE_NO_PAD.encode(&pk)
+        );
+        assert_eq!(jwk.len(), 3496, "RFC 7638 preimage length diverged");
+
         assert_eq!(
-            hex::encode(Sha3_256::digest(&preimage)),
-            "bc43fdb14017ec9b095aaa7f5741a8de41be42253c6c4da23e965bea02a17a7a",
-            "digest diverged from the PCA-0017 Section 5.1 vector"
+            hex::encode(Sha256::digest(jwk.as_bytes())),
+            "98979630d849dd49b51db9521352802c7376eceb9910c02a5644aea316fdb683",
+            "RFC 7638 thumbprint diverged from the reference"
         );
 
         let did = aqua_did_from_pubkey(&pk);
         assert_eq!(
-            did, "did:aqua:zW1n7u1YcZFfZuNcDv5XBZc5npJAArkE7nrv7gv3NCstHJh",
-            "did:aqua encoding diverged from the PCA-0017 Section 5.1 vector"
+            did, "did:aqua:zQmYcJk5pSrCsbnVeghcVhcQsjcwLgJ96Pd63pcuDxS1ikJ",
+            "did:aqua encoding diverged from the reference"
         );
         assert_eq!(did.len(), DID_AQUA_LEN);
+        assert!(
+            did.starts_with("did:aqua:zQm"),
+            "the body always starts zQm"
+        );
 
-        let mh = multihash_from_aqua_did(&did).expect("the published vector must validate");
+        let mh = multihash_from_aqua_did(&did).expect("the reference vector must validate");
         assert_eq!(
             hex::encode(mh),
-            format!(
-                "1620{}",
-                "bc43fdb14017ec9b095aaa7f5741a8de41be42253c6c4da23e965bea02a17a7a"
-            )
+            "122098979630d849dd49b51db9521352802c7376eceb9910c02a5644aea316fdb683"
         );
     }
 
-    /// The varint literal is consistent with the codec value it claims to
-    /// encode, so the two constants cannot drift apart unnoticed.
+    /// Known-answer vector 2, a real ML-DSA-87 public key: the one in NIST
+    /// ACVP `sigGen` test case 63 (ACVP-Server, ML-DSA-87, external
+    /// interface). The thumbprint is also given in its RFC 7638 text form.
     #[test]
-    fn codec_varint_is_consistent_with_the_codec_value() {
-        let [b0, b1] = MLDSA_87_PUB_CODEC_VARINT;
-        assert_eq!(b0 & 0x80, 0x80, "first byte must set the continuation bit");
-        assert_eq!(b1 & 0x80, 0, "second byte must be the final group");
-        let decoded = (b0 & 0x7f) as u32 | (((b1 & 0x7f) as u32) << 7);
-        assert_eq!(decoded, MLDSA_87_PUB_CODEC as u32);
+    fn known_answer_nist_acvp_sig_gen_tc63_key() {
+        let pk = hex::decode(
+            include_str!("../../tests/vectors/acvp-ml-dsa-87-sigGen-tc63-pk.hex").trim(),
+        )
+        .expect("fixture is hex");
+        assert_eq!(pk.len(), ML_DSA_87_PUBLIC_KEY_BYTES);
+
+        let jwk = format!(
+            r#"{{"alg":"ML-DSA-87","kty":"AKP","pub":"{}"}}"#,
+            URL_SAFE_NO_PAD.encode(&pk)
+        );
+        let thumbprint = Sha256::digest(jwk.as_bytes());
+        assert_eq!(
+            hex::encode(thumbprint),
+            "c1cc661d694174111647b7841859b1a9d1c35caf7b4cef9953cfbc1ce4d84663"
+        );
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(thumbprint),
+            "wcxmHWlBdBEWR7eEGFmxqdHDXK97TO-ZU8-8HOTYRmM",
+            "RFC 7638 base64url thumbprint diverged"
+        );
+        assert_eq!(
+            aqua_did_from_pubkey(&pk),
+            "did:aqua:zQmbPAAckcZZXF8hXB87MvjR3LRCDjJPkxe8gqK2ZBYSYsU"
+        );
+    }
+
+    /// Known-answer vector 3, ML-DSA-87 KeyGen from the 32-byte seed
+    /// `00 01 02 ... 1f`. The public key is first pinned by its SHA3-256 so
+    /// a KeyGen difference cannot be mistaken for a derivation difference.
+    #[test]
+    fn known_answer_keygen_from_seed() {
+        use ml_dsa::KeyInit;
+        use sha3::{Digest as _, Sha3_256};
+
+        let seed: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let key = ml_dsa::SigningKey::<ml_dsa::MlDsa87>::new(&seed.into());
+        let pk = ml_dsa::Keypair::verifying_key(&key)
+            .encode()
+            .as_slice()
+            .to_vec();
+
+        assert_eq!(pk.len(), ML_DSA_87_PUBLIC_KEY_BYTES);
+        assert_eq!(
+            hex::encode(Sha3_256::digest(&pk)),
+            "e6cf50a9c2fa5234f59949ff61f8161db4d629532127f4aefa8bb10811ecfb1e",
+            "KeyGen produced a different public key; this is not a derivation failure"
+        );
+        assert_eq!(
+            aqua_did_from_pubkey(&pk),
+            "did:aqua:zQmYbHLs8G7uDZZuPAT62wWott6mN7XTi1cDchj9xJPMTTZ"
+        );
+    }
+
+    /// The superseded construction (SHA3-256 over a tagged preimage, code
+    /// `0x16`) must be refused outright, and refused on the code, so a
+    /// consumer who still holds an old identity learns what changed.
+    #[test]
+    fn the_superseded_zero_key_identity_is_rejected_on_the_code() {
+        let old = "did:aqua:zW1n7u1YcZFfZuNcDv5XBZc5npJAArkE7nrv7gv3NCstHJh";
+        assert_eq!(old.len(), DID_AQUA_LEN, "fixture must pass the length gate");
+        let err = multihash_from_aqua_did(old).unwrap_err().to_string();
+        assert!(err.contains("wrong multihash code"), "got: {err}");
+        assert!(err.contains("0x12"), "must name the expected code: {err}");
+        assert!(
+            err.contains("sha2-256"),
+            "must name the expected hash: {err}"
+        );
+        assert!(
+            aqua_did_binds_pubkey(old, &[0u8; ML_DSA_87_PUBLIC_KEY_BYTES]).is_err(),
+            "binding must not treat an old-format identity as merely unequal"
+        );
+    }
+
+    /// A `0x12` code with any length byte other than `0x20` is refused,
+    /// even when the total is still 34 bytes (and so 56 characters).
+    #[test]
+    fn a_0x12_body_with_a_wrong_length_byte_is_rejected() {
+        let mut mh = vec![0x12, 0x1f];
+        mh.extend_from_slice(&Sha256::digest([0u8; 8]));
+        let s = format!("did:aqua:z{}", bs58::encode(&mh).into_string());
+        assert_eq!(s.len(), DID_AQUA_LEN, "fixture must stay 56 characters");
+        let err = multihash_from_aqua_did(&s).unwrap_err().to_string();
+        assert!(err.contains("wrong digest length"), "got: {err}");
     }
 
     #[test]
     fn encode_then_validate_round_trips() {
         let did = aqua_did_from_pubkey(&[0xab; ML_DSA_87_PUBLIC_KEY_BYTES]);
         let mh = multihash_from_aqua_did(&did).expect("round trip must validate");
-        assert_eq!(mh[0], MULTIHASH_SHA3_256);
+        assert_eq!(mh[0], MULTIHASH_SHA2_256);
         assert_eq!(mh[1], MULTIHASH_DIGEST_LEN);
     }
 
@@ -258,14 +361,15 @@ mod tests {
         assert_ne!(a, aqua_did_from_pubkey(&pk));
     }
 
-    /// The tag is what stops two schemes that share a key encoding from
-    /// minting the same identity (PCA-0017 Section 2.3, point 2).
+    /// The identity is the thumbprint of the AKP JSON, not a bare hash of
+    /// the key: `kty` and `alg` inside the hashed bytes are what bind the
+    /// scheme, so a hash over the raw key alone must not reproduce it.
     #[test]
-    fn the_codec_tag_is_part_of_the_preimage() {
+    fn the_scheme_members_are_part_of_the_preimage() {
         let pk = [3u8; ML_DSA_87_PUBLIC_KEY_BYTES];
-        let untagged = Sha3_256::digest(pk);
+        let bare = Sha256::digest(pk);
         let mh = multihash_from_aqua_did(&aqua_did_from_pubkey(&pk)).unwrap();
-        assert_ne!(&mh[2..], untagged.as_slice(), "identity must hash the tag");
+        assert_ne!(&mh[2..], bare.as_slice(), "identity must hash the AKP JSON");
     }
 
     #[test]
@@ -324,7 +428,7 @@ mod tests {
         // blake3-256 (0x1e) is a registered code and a well-formed
         // multihash, so this must be rejected for the code specifically.
         let mut mh = vec![0x1e, 0x20];
-        mh.extend_from_slice(&Sha3_256::digest([0u8; 8]));
+        mh.extend_from_slice(&Sha256::digest([0u8; 8]));
         let s = format!("did:aqua:z{}", bs58::encode(&mh).into_string());
         assert_eq!(s.len(), DID_AQUA_LEN, "fixture must stay 56 characters");
         let err = multihash_from_aqua_did(&s).unwrap_err().to_string();
