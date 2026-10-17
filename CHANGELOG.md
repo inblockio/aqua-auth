@@ -8,6 +8,21 @@ semver, staying below 1.0 while the crate is in active development.
 
 ### Breaking
 
+**`did:aqua` derivation changed (feature `did-aqua`).** The identifier is now
+the RFC 7638 JWK Thumbprint (SHA-256) of the RFC 9964 AKP key, as a sha2-256
+multihash: `did:aqua:z` + `base58btc(0x12 || 0x20 || SHA-256(jwk))` with `jwk`
+= `{"alg":"ML-DSA-87","kty":"AKP","pub":"<base64url-nopad(pk)>"}`. The method
+name and the 56-character, content-addressed shape are unchanged; the body now
+always starts `zQm`. Identities in the old format (a `0x16` sha3-256 multihash
+over `varint(0x1212) || pk`) are refused by `multihash_from_aqua_did` with a
+wrong-multihash-code error, and the public constants `MLDSA_87_PUB_CODEC` and
+`MLDSA_87_PUB_CODEC_VARINT` are removed. This matches aqua-rs-sdk (PCA-0017
+v0.11.0, ASA-0036) byte for byte; known-answer vectors in `src/aqua/codec.rs`
+pin it, including a NIST ACVP ML-DSA-87 key. The `did-aqua` feature now also
+enables the optional `sha2` and `base64` dependencies. No consumer enables
+`did-aqua`. Because this is breaking and the crate is pre-1.0, the next release
+is 0.10.0.
+
 The shared Redis credential store is removed: `RedisWebauthnStore`
 (`src/redis_webauthn.rs`), the `redis` cargo feature with its optional `redis`
 dependency, and the `AQUA_WEBAUTHN_REDIS_URL` switch that consumers use to

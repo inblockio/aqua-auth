@@ -69,6 +69,15 @@ form. The namespace/curve determines which signature algorithm applies.
 > (section 6.3). The reason to hash at all is size: an ML-DSA-87 public key is
 > 2592 bytes, and embedding it `did:key`-style yields a ~3552-character DID
 > (PCA-0017 section 1.4), against 56 characters content-addressed.
+>
+> **Construction (PCA-0017 v0.11.0 section 2.3).** The identifier is the
+> RFC 7638 JWK Thumbprint (SHA-256) of the RFC 9964 AKP key, as a sha2-256
+> multihash: `"did:aqua:z" || base58btc(0x12 || 0x20 || SHA-256(jwk))`, with
+> `jwk` as given in section 5.4. The body is always 46 characters and always
+> starts `zQm`. `kty` and `alg` inside the hashed JSON bind the scheme, so no
+> multicodec tag enters the preimage. A `did:aqua` in the superseded format
+> (a `0x16` sha3-256 multihash over a tagged preimage) is refused at
+> validation, on the multihash code.
 
 > **Two spellings, two principals (#182).** For ed25519/P-256, the `did:key` and
 > `did:pkh` forms of one key are **both accepted** and are **distinct principals**;
@@ -313,8 +322,11 @@ both; signers should prefer fixed-size for interoperability.
 **Verifier:**
 
 1. **Bind first.** Recompute `did:aqua:` + `z` +
-   `base58btc(0x16 || 0x20 || SHA3-256(varint(0x1212) || pk))` from the
-   supplied key and compare byte-for-byte against the presented DID. A
+   `base58btc(0x12 || 0x20 || SHA-256(jwk))` from the supplied key, where
+   `jwk` is the exact bytes
+   `{"alg":"ML-DSA-87","kty":"AKP","pub":"<base64url-nopad(pk)>"}` (members in
+   lexicographic order, no whitespace; the RFC 7638 JWK Thumbprint input for
+   the RFC 9964 AKP key), and compare byte-for-byte against the presented DID. A
    mismatch is a failed authentication, not a malformed request. Verifying
    before binding would prove possession of some key, which says nothing
    about the identity being claimed.
@@ -616,7 +628,7 @@ This specification does not cover:
   in-memory; persistence is out of scope).
 - Key rotation for the DID's signing key (the DID commits to the current
   public key, by embedding it for `did:key` / `did:pkh` / `did:peer` or by
-  hashing it for `aqua`; either way rotation requires a new DID).
+  hashing it (RFC 7638 thumbprint) for `aqua`; either way rotation requires a new DID).
 - WebAuthn beyond store-free P-256 passkey login (section 12): no
   attestation verification, no algorithm other than ES256, no credential store.
 

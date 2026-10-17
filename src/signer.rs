@@ -40,7 +40,7 @@ pub trait Signer: Send + Sync {
     /// of the DID or recovers it from the signature, so sending it would be
     /// redundant bytes.
     ///
-    /// `Some` only for `did:aqua`, where the DID is a SHA3-256 commitment to
+    /// `Some` only for `did:aqua`, where the DID is an RFC 7638 thumbprint commitment to
     /// a 2592-byte ML-DSA-87 key and the scheme has no public-key recovery.
     /// The key is public by definition, so exposing it here leaks nothing;
     /// the private half never crosses this trait.

@@ -136,7 +136,7 @@ async fn signed_session_request(
 
     // 4. Attach the public key when the signer offers one. Only `did:aqua`
     //    does: its verifier can obtain the key neither from the DID (a
-    //    SHA3-256 commitment) nor from the signature (ML-DSA has no
+    //    thumbprint commitment) nor from the signature (ML-DSA has no
     //    recovery). Classical signers return None and the field is omitted,
     //    so their request bytes are unchanged.
     Ok(SessionRequest {

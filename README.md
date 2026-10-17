@@ -34,7 +34,7 @@ Three first-class namespaces, all on by default, plus one gated post-quantum nam
 | `eip155` | `did:pkh:eip155:<chain_id>:0x<eip55_address>` | EVM 20-byte address (EIP-55) | EIP-191 personal_sign over secp256k1 |
 | `ed25519` | `did:key:z6Mk<multibase>` **or** `did:pkh:ed25519:0x<32-byte pubkey hex>` | Ed25519 public key | Ed25519 over canonical message bytes |
 | `p256` | `did:key:zDn<multibase>` **or** `did:pkh:p256:0x<33-byte compressed pubkey hex>` | P-256 public key | P-256 ECDSA over canonical message bytes |
-| `aqua` (gated) | `did:aqua:z<46 base58btc chars>` | SHA3-256 commitment to an ML-DSA-87 public key | ML-DSA-87 (FIPS 204) over canonical message bytes |
+| `aqua` (gated) | `did:aqua:z<46 base58btc chars>` | RFC 7638 JWK Thumbprint (SHA-256) of the RFC 9964 AKP key | ML-DSA-87 (FIPS 204) over canonical message bytes |
 
 The two non-EVM namespaces are Aqua extensions to CAIP-122; `did:peer` (variants 0 and 2) is additionally supported for DID resolution. See [`SPEC.md`](SPEC.md) for the authoritative wire contract.
 
