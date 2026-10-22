@@ -49,6 +49,31 @@ Consumers, when they adopt that release:
 
 Per-repository map: https://github.com/inblockio/aqua-auth/issues/8
 
+### Added
+
+Forward port of the hotfix on 0.9.0 (branch `hotfix/related-origins`, no
+version bump, no release tag; consumers pin the hotfix commit). Additive: no
+existing signature, type or field changes, `rp()` behaves exactly as on 0.9.0,
+and the verify path is untouched.
+
+- **Related origins in an assertion policy:**
+  `AssertionPolicyBuilder::rp_with_related_origins(rp_id, origins, related_origins)`.
+  A passkey registered under one RP ID (siwx-oidc's host, for example
+  `siwx-oidc.inblock.io`) can be used from an app on another host (the
+  explorer, aquafier) through a WebAuthn Level 3 related origin request: the
+  assertion carries the siwx host's `rpIdHash` and the app's origin, and
+  `verify_and_recover` accepts it for a listed related origin, so the user
+  keeps one `did:key:zDn...`. `origins` keep today's rule (must sit within
+  `rp_id`); `related_origins` use the same grammar and normalisation but need
+  not sit within it, and an IP-literal host is refused. Both lists merge,
+  deduplicated, into `RpEntry::origins` (origins first), so `RpEntry` keeps its
+  shape. A related origin is trusted to assert for an RP it does not sit
+  within: list one only when the RP host publishes it in
+  `/.well-known/webauthn`. The browser enforces that publication, this crate
+  does not. An origin listed for one entry never satisfies another. `rp()` is
+  unchanged and still refuses an origin outside its RP ID
+  (`OriginOutsideRpId`).
+
 ## [0.9.0] - 2026-10-10
 
 Store-free passkey login. A P-256 passkey logs in as the `did:key:zDn...` of
