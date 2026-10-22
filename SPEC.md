@@ -765,8 +765,13 @@ all of the following hold, each failure with its own `AssertionError`:
    RP ID. Policy origins are stored in the browser's form (`scheme://host[:port]`,
    lowercase host, default port omitted, no trailing slash), `https` only
    except on `localhost` and `*.localhost`, each within its RP ID on a label
-   boundary. One origin
-   may be listed under several RP IDs; `rpIdHash` picks the entry.
+   boundary, or listed as a *related origin* of that RP ID
+   (`AssertionPolicyBuilder::rp_with_related_origins`): an origin outside the
+   RP ID that the RP host publishes in `/.well-known/webauthn` (WebAuthn Level
+   3). A related origin is trusted to assert for an RP it does not sit within;
+   the browser enforces the publication, this check does not. One origin
+   may be listed under several RP IDs; `rpIdHash` picks the entry, and an
+   origin listed for one entry never satisfies another.
 6. **Embedding** (`CrossOrigin`, `TopOriginPresent`): `crossOrigin` is not
    `true` and `topOrigin` is absent.
 7. **User** (`UserPresenceMissing`, `UserVerificationMissing`): UP set; UV
