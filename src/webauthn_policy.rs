@@ -24,6 +24,22 @@
 //! One origin may sit under several RP IDs (a host within both a shared RP ID
 //! and its own legacy RP ID). Selection is by `rpIdHash` first; the origin must
 //! then be listed under that entry.
+//!
+//! # Related origins
+//!
+//! [`AssertionPolicyBuilder::rp_with_related_origins`] adds origins that do
+//! **not** sit within the RP ID (WebAuthn Level 3 related origin requests: a
+//! passkey registered under one RP ID used from a page on another site). A
+//! related origin is trusted to assert for an RP it does not sit within, so the
+//! operator lists one only when the RP host publishes it in
+//! `https://<rp-id>/.well-known/webauthn`. The browser enforces that
+//! publication before it lets the page ask for the RP ID; this crate cannot
+//! check it and a misconfigured list is trusted as written. Related origins
+//! follow the same grammar and normalisation as ordinary origins (`https`, or
+//! `http` on `localhost`; no path, query, fragment or user info) and are
+//! additionally refused when the host is an IP literal. Both lists are merged
+//! into the entry's single origin list, so the verifier treats them alike, and
+//! an origin listed for one entry never satisfies another.
 
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -56,8 +72,9 @@ pub enum PolicyError {
 /// One relying party: its RP ID, the SHA-256 of that RP ID as it appears in
 /// `authenticatorData`, and the origins allowed to assert for it.
 ///
-/// Built only through [`AssertionPolicyBuilder::rp`], which normalises and
-/// validates every field.
+/// Built only through [`AssertionPolicyBuilder::rp`] or
+/// [`AssertionPolicyBuilder::rp_with_related_origins`], which normalise and
+/// validate every field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpEntry {
     /// Normalised RP ID (lowercase, no trailing dot).
@@ -65,7 +82,11 @@ pub struct RpEntry {
     /// `SHA-256(rp_id)`, compared byte for byte with `authenticatorData[0..32]`.
     pub rp_id_hash: [u8; 32],
     /// Allowed origins in the browser's serialisation, deduplicated, in
-    /// configuration order.
+    /// configuration order (origins within the RP ID first, then related
+    /// origins). Entries from [`AssertionPolicyBuilder::rp`] all sit within
+    /// `rp_id`; an entry from [`AssertionPolicyBuilder::rp_with_related_origins`]
+    /// may also hold related origins, which do not, and are trusted to assert
+    /// for this RP ID because the operator listed them (see the module docs).
     pub origins: Vec<String>,
 }
 
@@ -120,20 +141,78 @@ pub struct AssertionPolicyBuilder {
 
 impl AssertionPolicyBuilder {
     /// Add one RP ID with the origins allowed to assert for it. Origins are
-    /// normalised to the browser's form and must sit within `rp_id`.
-    pub fn rp(mut self, rp_id: &str, origins: &[&str]) -> Result<Self, PolicyError> {
+    /// normalised to the browser's form and must sit within `rp_id`; an origin
+    /// outside it is refused with [`PolicyError::OriginOutsideRpId`]. To trust
+    /// an origin on another site, use
+    /// [`rp_with_related_origins`](Self::rp_with_related_origins).
+    pub fn rp(self, rp_id: &str, origins: &[&str]) -> Result<Self, PolicyError> {
+        self.add_rp(rp_id, origins, &[])
+    }
+
+    /// Add one RP ID with the origins allowed to assert for it, plus related
+    /// origins that need not sit within it.
+    ///
+    /// `origins` follow exactly the rules of [`rp`](Self::rp): normalised, and
+    /// each must sit within `rp_id`. `related_origins` use the same origin
+    /// grammar and normalisation (`https`, or `http` on `localhost`; no path,
+    /// query, fragment or user info) but are **not** required to sit within
+    /// `rp_id`; an IP-literal host is refused. Both lists are merged,
+    /// deduplicated, in order (`origins` first) into the entry's
+    /// [`RpEntry::origins`]. At least one origin across both lists is required
+    /// ([`PolicyError::NoOrigins`]).
+    ///
+    /// A related origin is trusted to assert for an RP ID it does not sit
+    /// within. List one only when the RP host publishes it in
+    /// `https://<rp_id>/.well-known/webauthn` (WebAuthn Level 3 related
+    /// origin requests). The browser enforces that publication before it lets
+    /// the page ask for `rp_id`; this crate does not and cannot, so the
+    /// operator's list is what an assertion from that origin is checked
+    /// against. The origin is valid for this entry only: it never satisfies
+    /// another RP ID's entry.
+    pub fn rp_with_related_origins(
+        self,
+        rp_id: &str,
+        origins: &[&str],
+        related_origins: &[&str],
+    ) -> Result<Self, PolicyError> {
+        self.add_rp(rp_id, origins, related_origins)
+    }
+
+    /// The one place an entry is validated and built, so the origin grammar of
+    /// [`rp`](Self::rp) and [`rp_with_related_origins`](Self::rp_with_related_origins)
+    /// cannot drift.
+    fn add_rp(
+        mut self,
+        rp_id: &str,
+        origins: &[&str],
+        related_origins: &[&str],
+    ) -> Result<Self, PolicyError> {
         let rp_id = validate_rp_id(rp_id)?;
         if self.entries.iter().any(|e| e.rp_id == rp_id) {
             return Err(PolicyError::DuplicateRpId { rp_id });
         }
-        if origins.is_empty() {
+        if origins.is_empty() && related_origins.is_empty() {
             return Err(PolicyError::NoOrigins { rp_id });
         }
-        let mut normalised: Vec<String> = Vec::with_capacity(origins.len());
+        let mut normalised: Vec<String> = Vec::with_capacity(origins.len() + related_origins.len());
         for raw in origins {
             let (origin, host) = normalise_origin(raw)?;
             if !host_within_rp_id(&host, &rp_id) {
                 return Err(PolicyError::OriginOutsideRpId { origin, rp_id });
+            }
+            if !normalised.contains(&origin) {
+                normalised.push(origin);
+            }
+        }
+        for raw in related_origins {
+            let (origin, host) = normalise_origin(raw)?;
+            // Not bound to the RP ID, so nothing else limits the host: a
+            // browser cannot publish an IP address as a related origin.
+            if host.parse::<std::net::IpAddr>().is_ok() {
+                return Err(PolicyError::InvalidOrigin {
+                    origin: (*raw).to_string(),
+                    reason: "IP literals are not allowed as related origins".into(),
+                });
             }
             if !normalised.contains(&origin) {
                 normalised.push(origin);
@@ -456,6 +535,70 @@ mod tests {
                 .err(),
             Some(PolicyError::DuplicateRpId { .. })
         ));
+    }
+
+    #[test]
+    fn related_origins_merge_after_origins_deduplicated_and_normalised() {
+        let p = AssertionPolicy::builder()
+            .rp_with_related_origins(
+                "dev.siwx.inblock.io",
+                &[
+                    "https://dev.siwx.inblock.io",
+                    "https://a.dev.siwx.inblock.io/",
+                ],
+                &[
+                    "HTTPS://Dev.Aqua-Node.Inblock.io/",
+                    "https://dev.siwx.inblock.io", // already listed above
+                    "https://dev.aqua-node.inblock.io:443", // default port dropped
+                    "http://localhost:3000",
+                ],
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let e = p
+            .entry_for_rp_id_hash(&hash("dev.siwx.inblock.io"))
+            .unwrap();
+        assert_eq!(
+            e.origins,
+            [
+                "https://dev.siwx.inblock.io",
+                "https://a.dev.siwx.inblock.io",
+                "https://dev.aqua-node.inblock.io",
+                "http://localhost:3000",
+            ]
+        );
+        assert!(e.allows_origin("https://dev.aqua-node.inblock.io"));
+        assert_eq!(p.entries().len(), 1);
+    }
+
+    #[test]
+    fn rp_is_rp_with_no_related_origins() {
+        // `rp` and the new method share one helper: same entry, same errors.
+        let a = AssertionPolicy::builder()
+            .rp(
+                "inblock.io",
+                &["https://a.inblock.io", "https://b.inblock.io"],
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let b = AssertionPolicy::builder()
+            .rp_with_related_origins(
+                "inblock.io",
+                &["https://a.inblock.io", "https://b.inblock.io"],
+                &[],
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(a, b);
+        assert_eq!(
+            AssertionPolicy::builder().rp("inblock.io", &[]).err(),
+            AssertionPolicy::builder()
+                .rp_with_related_origins("inblock.io", &[], &[])
+                .err()
+        );
     }
 
     #[test]
