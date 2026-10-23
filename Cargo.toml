@@ -79,7 +79,7 @@ tracing = { version = "0.1", optional = true }
 ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"], optional = true }
 
 # Behind `webauthn` feature
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 base64 = { version = "0.21", optional = true }
 # Public-key recovery (`VerifyingKey::recover_from_prehash`, `RecoveryId`). The
 # same 0.16 line p256 0.13 already builds on, so it adds no new code.
