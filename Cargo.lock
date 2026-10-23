@@ -60,7 +60,7 @@ name = "aqua-auth"
 version = "0.9.0"
 dependencies = [
  "async-trait",
- "base64 0.21.7",
+ "base64 0.22.1",
  "bs58",
  "chrono",
  "curve25519-dalek",
@@ -91,7 +91,7 @@ name = "aqua-auth-directory"
 version = "0.1.0"
 dependencies = [
  "aqua-auth",
- "base64 0.21.7",
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
