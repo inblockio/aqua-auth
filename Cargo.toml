@@ -80,7 +80,7 @@ ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"], op
 
 # Behind `webauthn` feature
 sha2 = { version = "0.10", optional = true }
-base64 = { version = "0.21", optional = true }
+base64 = { version = "0.22", optional = true }
 # Public-key recovery (`VerifyingKey::recover_from_prehash`, `RecoveryId`). The
 # same 0.16 line p256 0.13 already builds on, so it adds no new code.
 ecdsa = { version = "0.16", optional = true, default-features = false, features = ["verifying"] }
