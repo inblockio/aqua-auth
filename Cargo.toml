@@ -88,7 +88,7 @@ ecdsa = { version = "0.16", optional = true, default-features = false, features 
 # Behind `http-sig` feature: RFC 8941 structured field parsing/serialization.
 # Hand-rolling structured fields is where RFC 9421 implementations go wrong
 # (quoting, escaping, integer canonicalisation), so this is delegated.
-sfv = { version = "0.15", optional = true }
+sfv = { version = "0.16", optional = true }
 
 # Behind `ceremony` feature. Pinned to the EXACT version aqua-node/aquafier use
 # so the serialized `Passkey` blob (feature `danger-allow-state-serialisation`)
