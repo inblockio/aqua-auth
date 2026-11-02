@@ -91,7 +91,7 @@ impl LocalKeySigner {
                 curve: "P-256",
                 detail: e.to_string(),
             })?;
-        let point = key.verifying_key().to_encoded_point(true);
+        let point = key.verifying_key().to_sec1_point(true);
         let mut compressed = [0u8; 33];
         compressed.copy_from_slice(point.as_bytes());
         let did = crate::did::p256_did_key_from_pubkey(&compressed);
@@ -165,6 +165,7 @@ impl Signer for LocalKeySigner {
 mod tests {
     use super::*;
     use crate::verify_caip122;
+    use ::p256::elliptic_curve::Generate as _;
 
     fn ed25519_pem() -> String {
         use ed25519_dalek::pkcs8::EncodePrivateKey;
@@ -176,7 +177,7 @@ mod tests {
 
     fn p256_pem() -> String {
         use p256::pkcs8::EncodePrivateKey;
-        p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng)
+        p256::ecdsa::SigningKey::generate()
             .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
             .unwrap()
             .to_string()

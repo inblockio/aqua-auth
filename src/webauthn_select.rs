@@ -48,13 +48,13 @@ impl DidHint {
     /// bytes, so the result is a selector like any other hint: it names the
     /// account only if the following assertion recovers this key.
     pub fn from_spki_der(spki: &[u8]) -> Result<DidHint, CryptoError> {
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        use p256::elliptic_curve::sec1::ToSec1Point;
         use p256::pkcs8::DecodePublicKey;
 
         let key = p256::PublicKey::from_public_key_der(spki).map_err(|e| {
             CryptoError::InvalidDid(format!("not a P-256 SubjectPublicKeyInfo: {e}"))
         })?;
-        let point = key.to_encoded_point(true);
+        let point = key.to_sec1_point(true);
         let compressed: &[u8; 33] = point
             .as_bytes()
             .try_into()
@@ -244,7 +244,7 @@ mod tests {
     }
 
     fn compressed(sk: &SigningKey) -> [u8; 33] {
-        let point = sk.verifying_key().to_encoded_point(true);
+        let point = sk.verifying_key().to_sec1_point(true);
         point.as_bytes().try_into().unwrap()
     }
 
@@ -460,7 +460,17 @@ mod tests {
         assert_eq!(hint.as_str(), did_of(&sk));
         assert!(hint.as_str().starts_with("did:key:zDn"));
 
-        let secp256k1 = k256::ecdsa::SigningKey::random(&mut StdRng::seed_from_u64(1))
+        // k256 0.13 `SigningKey::random` sampling (rejection over big-endian
+        // 32-byte draws), kept so this is the same key as before.
+        let mut rng = StdRng::seed_from_u64(1);
+        let secp256k1 = loop {
+            let mut bytes = k256::FieldBytes::default();
+            rand::RngCore::fill_bytes(&mut rng, &mut bytes);
+            if let Ok(key) = k256::ecdsa::SigningKey::from_bytes(&bytes) {
+                break key;
+            }
+        };
+        let secp256k1 = secp256k1
             .verifying_key()
             .to_public_key_der()
             .unwrap()

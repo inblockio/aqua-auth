@@ -50,6 +50,12 @@ impl CipherSuite for Eip155Suite {
 
         let recovered = k256::ecdsa::VerifyingKey::recover_from_prehash(&prehash, &sig, rec_id)
             .map_err(|e| CryptoError::InvalidSignature(format!("ecrecover failed: {e}")))?;
+        // ecdsa 0.16 ended `recover_from_prehash` by verifying the signature
+        // against the recovered key, which on secp256k1 refuses a high-`s`
+        // signature; ecdsa 0.17 no longer does. Keep that post-condition here
+        // (same fix as aqua-rs-sdk `recover_wallet_address`).
+        k256::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(&recovered, &prehash, &sig)
+            .map_err(|e| CryptoError::InvalidSignature(format!("ecrecover failed: {e}")))?;
 
         Ok(address_from_verifying_key(&recovered) == expected_addr)
     }
@@ -78,8 +84,8 @@ impl CipherSuite for Eip155Suite {
 mod tests {
     use super::*;
     use crate::did::eip55_checksum;
+    use ::p256::elliptic_curve::Generate as _;
     use k256::ecdsa::SigningKey;
-    use rand::rngs::OsRng;
     use sha3::Keccak256;
 
     fn eth_sign(key: &SigningKey, msg: &str) -> Vec<u8> {
@@ -90,7 +96,7 @@ mod tests {
             h.update(msg.as_bytes());
             h.finalize().into()
         };
-        let (sig, rec_id) = key.sign_prehash_recoverable(&prehash).unwrap();
+        let (sig, rec_id) = key.sign_prehash_recoverable(&prehash);
         let mut bytes = [0u8; 65];
         bytes[..64].copy_from_slice(&sig.to_bytes());
         bytes[64] = u8::from(rec_id) + 27;
@@ -98,7 +104,7 @@ mod tests {
     }
 
     fn make_keypair() -> (SigningKey, String) {
-        let secret = k256::SecretKey::random(&mut OsRng);
+        let secret = k256::SecretKey::generate();
         let signing_key = SigningKey::from(&secret);
         let addr = address_from_verifying_key(signing_key.verifying_key());
         let did = format!("did:pkh:eip155:1:0x{}", eip55_checksum(&addr));
@@ -126,6 +132,25 @@ mod tests {
         let (key, did) = make_keypair();
         let sig = eth_sign(&key, "original");
         assert!(!Eip155Suite.verify(&did, "tampered", &sig).unwrap());
+    }
+
+    /// The high-`s` twin of a valid signature (`s' = n - s`, recovery parity
+    /// flipped) recovers the same signer, and is still refused: secp256k1
+    /// verification accepts low `s` only. ecdsa 0.16 enforced this inside
+    /// `recover_from_prehash`; on 0.17 `verify` must do it itself.
+    #[test]
+    fn high_s_twin_is_refused() {
+        let (key, did) = make_keypair();
+        let msg = "hello siwx";
+        let low = eth_sign(&key, msg);
+        let sig = k256::ecdsa::Signature::from_slice(&low[..64]).unwrap();
+        let (r, s) = sig.split_scalars();
+        let high_sig = k256::ecdsa::Signature::from_scalars(r.to_bytes(), (-*s).to_bytes())
+            .expect("n - s is a valid nonzero scalar");
+        let mut high = high_sig.to_bytes().to_vec();
+        high.push(((low[64] - 27) ^ 1) + 27);
+        assert!(Eip155Suite.verify(&did, msg, &low).unwrap());
+        assert!(Eip155Suite.verify(&did, msg, &high).is_err());
     }
 
     #[test]

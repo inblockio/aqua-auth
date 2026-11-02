@@ -79,7 +79,7 @@ pub fn pubkey_from_p256_did(did: &str) -> Result<[u8; 33], CryptoError> {
 /// Derive the Ethereum address from a secp256k1 verifying key.
 /// `address = keccak256(uncompressed_pubkey[1..])[12..]`
 pub fn address_from_verifying_key(key: &k256::ecdsa::VerifyingKey) -> [u8; 20] {
-    let point = key.to_encoded_point(false);
+    let point = key.to_sec1_point(false);
     let hash = Keccak256::digest(&point.as_bytes()[1..]);
     let mut addr = [0u8; 20];
     addr.copy_from_slice(&hash[12..]);

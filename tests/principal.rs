@@ -11,11 +11,11 @@ use aqua_auth::{authenticate, CryptoError, Principal};
 /// `dispatch_eip155` pattern in lib.rs. Returns the signer's did:pkh and the
 /// 65-byte signature.
 fn signed_eip155(msg: &str) -> (String, Vec<u8>) {
+    use ::p256::elliptic_curve::Generate as _;
     use k256::ecdsa::SigningKey;
-    use rand::rngs::OsRng;
     use sha3::{Digest, Keccak256};
 
-    let secret = k256::SecretKey::random(&mut OsRng);
+    let secret = k256::SecretKey::generate();
     let signing_key = SigningKey::from(&secret);
     let addr = aqua_auth::address_from_verifying_key(signing_key.verifying_key());
     let did = format!("did:pkh:eip155:1:0x{}", aqua_auth::eip55_checksum(&addr));
@@ -27,7 +27,7 @@ fn signed_eip155(msg: &str) -> (String, Vec<u8>) {
         h.update(msg.as_bytes());
         h.finalize().into()
     };
-    let (sig, rec_id) = signing_key.sign_prehash_recoverable(&prehash).unwrap();
+    let (sig, rec_id) = signing_key.sign_prehash_recoverable(&prehash);
     let mut sig_bytes = [0u8; 65];
     sig_bytes[..64].copy_from_slice(&sig.to_bytes());
     sig_bytes[64] = u8::from(rec_id) + 27; // Ethereum recovery id convention

@@ -16,6 +16,7 @@
 #![allow(deprecated)]
 #![cfg(feature = "http-sig")]
 
+use ::p256::elliptic_curve::Generate as _;
 use aqua_auth::http_sig::{
     sign_request, verify_request, HttpSigError, NonceReplayGuard, Profile, RequestParts,
     VerifyOptions, ALG_ECDSA_P256_SHA256, ALG_ED25519, ALG_EIP191_SECP256K1, MAX_VALIDITY,
@@ -82,8 +83,8 @@ struct P256Local {
 
 impl P256Local {
     fn generate() -> Self {
-        let key = p256::ecdsa::SigningKey::random(&mut OsRng);
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let key = p256::ecdsa::SigningKey::generate();
+        let compressed = key.verifying_key().to_sec1_point(true);
         let mut bytes: Vec<u8> = vec![0x80, 0x24];
         bytes.extend_from_slice(compressed.as_bytes());
         let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());
@@ -111,7 +112,7 @@ struct Eip155Local {
 
 impl Eip155Local {
     fn generate() -> Self {
-        let key = k256::ecdsa::SigningKey::from(&k256::SecretKey::random(&mut OsRng));
+        let key = k256::ecdsa::SigningKey::from(&k256::SecretKey::generate());
         let address = aqua_auth::address_from_verifying_key(key.verifying_key());
         let did = format!("did:pkh:eip155:1:0x{}", aqua_auth::eip55_checksum(&address));
         Self { key, did }
@@ -132,10 +133,7 @@ impl Signer for Eip155Local {
             hasher.update(message.as_bytes());
             hasher.finalize().into()
         };
-        let (sig, rec_id) = self
-            .key
-            .sign_prehash_recoverable(&prehash)
-            .map_err(|e| SignError(e.to_string()))?;
+        let (sig, rec_id) = self.key.sign_prehash_recoverable(&prehash);
         let mut out = Vec::with_capacity(65);
         out.extend_from_slice(&sig.to_bytes());
         out.push(u8::from(rec_id) + 27);

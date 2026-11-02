@@ -6,6 +6,7 @@
 //! the point of the `Signer` trait being async and pluggable.
 
 use crate::signer::{SignError, Signer};
+use ::p256::elliptic_curve::Generate as _;
 use async_trait::async_trait;
 use rand::rngs::OsRng;
 
@@ -45,8 +46,8 @@ pub(crate) struct P256TestSigner {
 
 impl P256TestSigner {
     pub(crate) fn generate() -> Self {
-        let key = p256::ecdsa::SigningKey::random(&mut OsRng);
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let key = p256::ecdsa::SigningKey::generate();
+        let compressed = key.verifying_key().to_sec1_point(true);
         let mut bytes = crate::key::P256_PREFIX.to_vec();
         bytes.extend_from_slice(compressed.as_bytes());
         let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());
@@ -75,7 +76,7 @@ pub(crate) struct Eip155TestSigner {
 
 impl Eip155TestSigner {
     pub(crate) fn generate() -> Self {
-        let key = k256::ecdsa::SigningKey::from(&k256::SecretKey::random(&mut OsRng));
+        let key = k256::ecdsa::SigningKey::from(&k256::SecretKey::generate());
         let address = crate::did::address_from_verifying_key(key.verifying_key());
         let did = format!(
             "did:pkh:eip155:1:0x{}",
@@ -100,10 +101,7 @@ impl Signer for Eip155TestSigner {
             hasher.update(message.as_bytes());
             hasher.finalize().into()
         };
-        let (sig, rec_id) = self
-            .key
-            .sign_prehash_recoverable(&prehash)
-            .map_err(|e| SignError(e.to_string()))?;
+        let (sig, rec_id) = self.key.sign_prehash_recoverable(&prehash);
         let mut out = Vec::with_capacity(65);
         out.extend_from_slice(&sig.to_bytes());
         out.push(u8::from(rec_id) + 27);

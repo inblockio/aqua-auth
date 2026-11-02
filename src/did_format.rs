@@ -72,7 +72,7 @@ use crate::key::{decode_multibase_key, KeyType};
 const ED25519_PUBKEY_BYTES: usize = 32;
 
 /// Raw byte length of a compressed SEC1 P-256 point, per SPEC section 3. The
-/// same number `EncodedPoint::from_bytes` enforces inside `verify_with_key`.
+/// same number `Sec1Point::from_bytes` enforces inside `verify_with_key`.
 const P256_COMPRESSED_PUBKEY_BYTES: usize = 33;
 
 /// Check that `did` is well-formed: a method some registered
@@ -246,13 +246,14 @@ mod tests {
     /// The half of rule 5 that a verifier refusing everything would otherwise
     /// pass trivially.
     fn valid_spellings() -> Vec<(&'static str, String)> {
+        use ::p256::elliptic_curve::Generate as _;
         use ed25519_dalek::SigningKey as EdKey;
         use rand::rngs::OsRng;
 
         let ed = EdKey::generate(&mut OsRng);
         let ed_pk = *ed.verifying_key().as_bytes();
-        let p = p256::ecdsa::SigningKey::random(&mut OsRng);
-        let p_compressed = p.verifying_key().to_encoded_point(true);
+        let p = p256::ecdsa::SigningKey::generate();
+        let p_compressed = p.verifying_key().to_sec1_point(true);
         let p_pk: [u8; 33] = p_compressed.as_bytes().try_into().unwrap();
 
         let peer_body = {

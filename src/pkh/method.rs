@@ -115,7 +115,7 @@ mod tests {
             h.update(msg.as_bytes());
             h.finalize().into()
         };
-        let (sig, rec_id) = key.sign_prehash_recoverable(&prehash).unwrap();
+        let (sig, rec_id) = key.sign_prehash_recoverable(&prehash);
         let mut bytes = [0u8; 65];
         bytes[..64].copy_from_slice(&sig.to_bytes());
         bytes[64] = u8::from(rec_id) + 27;
@@ -123,8 +123,8 @@ mod tests {
     }
 
     fn make_eip155_keypair() -> (k256::ecdsa::SigningKey, String) {
-        use rand::rngs::OsRng;
-        let secret = k256::SecretKey::random(&mut OsRng);
+        use ::p256::elliptic_curve::Generate as _;
+        let secret = k256::SecretKey::generate();
         let key = k256::ecdsa::SigningKey::from(&secret);
         let addr = address_from_verifying_key(key.verifying_key());
         let did = format!("did:pkh:eip155:1:0x{}", eip55_checksum(&addr));

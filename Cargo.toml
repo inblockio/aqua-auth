@@ -46,12 +46,12 @@ ceremony = ["webauthn", "dep:webauthn-rs", "dep:uuid"]
 [dependencies]
 # Always (crypto layer)
 async-trait = "0.1"
-k256 = { version = "0.13", features = ["ecdsa"] }
+k256 = { version = "0.14", features = ["ecdsa"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 # Point checks for strict Ed25519 public keys. Pinned exactly to the version
 # ed25519-dalek already resolves to, so no second copy enters the build.
 curve25519-dalek = { version = "=4.1.3", default-features = false }
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.14", features = ["ecdsa"] }
 sha3 = "0.10"
 bs58 = "0.5"
 hex = "0.4"
@@ -82,8 +82,11 @@ ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"], op
 sha2 = { version = "0.10", optional = true }
 base64 = { version = "0.21", optional = true }
 # Public-key recovery (`VerifyingKey::recover_from_prehash`, `RecoveryId`). The
-# same 0.16 line p256 0.13 already builds on, so it adds no new code.
-ecdsa = { version = "0.16", optional = true, default-features = false, features = ["verifying"] }
+# same 0.17 line p256 0.14 already builds on, so it adds no new code. ecdsa
+# 0.17 dropped the `verifying` feature: recovery and verification come with
+# p256's own `ecdsa` feature, so none is needed here.
+ecdsa = { version = "0.17", optional = true, default-features = false }
+
 
 # Behind `http-sig` feature: RFC 8941 structured field parsing/serialization.
 # Hand-rolling structured fields is where RFC 9421 implementations go wrong
