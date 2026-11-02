@@ -23,11 +23,11 @@ axum = "0.8"
 bs58 = "0.5"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex = "0.4"
-k256 = { version = "0.13", features = ["ecdsa"] }
+k256 = { version = "0.14", features = ["ecdsa"] }
 # Same version aqua-auth and aqua-rs-sdk pin, so the testkit signer and the
 # verifier can never disagree about what a valid ML-DSA-87 signature is.
 ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"] }
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.14", features = ["ecdsa"] }
 rand = "0.8"
 sha3 = "0.10"
 serde = { version = "1", features = ["derive"] }

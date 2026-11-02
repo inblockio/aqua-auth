@@ -203,6 +203,7 @@ impl ChallengeStore {
 #[allow(deprecated)]
 mod tests {
     use super::*;
+    use ::p256::elliptic_curve::Generate as _;
 
     fn test_store() -> ChallengeStore {
         ChallengeStore::new(300, "aqua-node".into(), "http://127.0.0.1:3000".into())
@@ -268,8 +269,8 @@ mod tests {
     #[test]
     fn create_challenge_for_did_key_p256() {
         let store = test_store();
-        let key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let key = p256::ecdsa::SigningKey::generate();
+        let compressed = key.verifying_key().to_sec1_point(true);
         let mut bytes = crate::key::P256_PREFIX.to_vec();
         bytes.extend_from_slice(compressed.as_bytes());
         let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());

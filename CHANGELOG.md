@@ -74,7 +74,30 @@ and the verify path is untouched.
   unchanged and still refuses an origin outside its RP ID
   (`OriginOutsideRpId`).
 
+### Security
+
+- **`k256` and `p256` 0.14, `ecdsa` 0.17 (#19, RUSTSEC-2026-0387).** The curve
+  crates move to 0.14 (`ecdsa` 0.17, `elliptic-curve` 0.14, `signature` 3),
+  which carries `crypto-bigint` 0.7; `crypto-bigint` < 0.7.6 has timing
+  variability in operations meant to be constant-time, and 0.13 reached 0.5.5
+  through `elliptic-curve` 0.13. Same move as aqua-rs-sdk (#234). No wire,
+  DID or verdict change: signatures, key and DID encodings and every
+  accept/refuse decision are as before, and the conformance and unit suites
+  pass unchanged. ecdsa 0.17 `recover_from_prehash` no longer verifies the
+  signature against the recovered key; `Eip155Suite` (EIP-191 ecrecover) and
+  `verify_and_recover` (passkey recovery) now do that check themselves, so a
+  high-`s` EIP-191 signature is still refused. `SoftPasskey::new_seeded`
+  keeps drawing its key exactly as p256 0.13 did, so every seeded key and
+  `did:key` is byte-identical. Consumer-visible: `address_from_verifying_key`
+  takes a `k256` 0.14 `VerifyingKey` and `SoftPasskey::key` is a `p256` 0.14
+  `SigningKey`. `ecdsa` 0.17 has no `verifying` feature, so the optional
+  `ecdsa` dependency now enables none. `crypto-bigint` 0.5.5 stays in the
+  lockfile through `webauthn-rs` `=0.6.1-dev` (feature `ceremony` only): that
+  pin is shared with aqua-node and aquafier, and webauthn-rs 0.6.2 is the
+  first release on the 0.14 stack. Every other feature set is free of it.
+
 ## [0.9.0] - 2026-10-10
+
 
 Store-free passkey login. A P-256 passkey logs in as the `did:key:zDn...` of
 its own public key at every service under the same RP ID, and no service needs

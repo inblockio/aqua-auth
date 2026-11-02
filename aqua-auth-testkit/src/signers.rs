@@ -17,6 +17,7 @@
 //! async and pluggable: a KMS, an HSM, a wallet prompt, or a passkey touch
 //! slots in behind the same trait.
 
+use ::p256::elliptic_curve::Generate as _;
 use aqua_auth::{SignError, Signer};
 use async_trait::async_trait;
 use rand::rngs::OsRng;
@@ -81,8 +82,8 @@ pub struct P256Local {
 impl P256Local {
     /// Generate a fresh key advertised under `spelling`.
     pub fn generate(spelling: Spelling) -> Self {
-        let key = p256::ecdsa::SigningKey::random(&mut OsRng);
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let key = p256::ecdsa::SigningKey::generate();
+        let compressed = key.verifying_key().to_sec1_point(true);
         let did = match spelling {
             Spelling::DidKey => {
                 let mut bytes = P256_MULTICODEC.to_vec();
@@ -120,7 +121,7 @@ pub struct Eip155Local {
 impl Eip155Local {
     /// Generate a fresh key on chain 1.
     pub fn generate() -> Self {
-        let key = k256::ecdsa::SigningKey::from(&k256::SecretKey::random(&mut OsRng));
+        let key = k256::ecdsa::SigningKey::from(&k256::SecretKey::generate());
         let address = aqua_auth::address_from_verifying_key(key.verifying_key());
         let did = format!("did:pkh:eip155:1:0x{}", aqua_auth::eip55_checksum(&address));
         Self { key, did }
@@ -144,10 +145,7 @@ impl Signer for Eip155Local {
             hasher.update(message.as_bytes());
             hasher.finalize().into()
         };
-        let (signature, recovery_id) = self
-            .key
-            .sign_prehash_recoverable(&prehash)
-            .map_err(|e| SignError(e.to_string()))?;
+        let (signature, recovery_id) = self.key.sign_prehash_recoverable(&prehash);
         let mut out = Vec::with_capacity(65);
         out.extend_from_slice(&signature.to_bytes());
         out.push(u8::from(recovery_id) + 27);

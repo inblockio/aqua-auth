@@ -7,7 +7,7 @@
 use crate::CryptoError;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
-use p256::EncodedPoint;
+use p256::Sec1Point;
 use sha2::{Digest, Sha256};
 
 /// User Present flag bit of `authenticatorData` (WebAuthn section 6.1).
@@ -160,13 +160,14 @@ pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<boo
         )));
     }
 
-    let encoded_point = EncodedPoint::from_bytes(params.credential_public_key).map_err(|e| {
+    let encoded_point = Sec1Point::from_bytes(params.credential_public_key).map_err(|e| {
         CryptoError::InvalidSignature(format!("invalid public key encoding: {}", e))
     })?;
-    let verifying_key = VerifyingKey::from_encoded_point(&encoded_point)
+    let verifying_key = VerifyingKey::from_sec1_point(&encoded_point)
         .map_err(|e| CryptoError::InvalidSignature(format!("invalid P-256 public key: {}", e)))?;
 
-    let signature = Signature::from_bytes(params.signature.into())
+    // Length is checked to be 64 above, so `from_slice` is `from_bytes`.
+    let signature = Signature::from_slice(params.signature)
         .map_err(|e| CryptoError::InvalidSignature(format!("invalid signature encoding: {}", e)))?;
 
     match verifying_key.verify(&signed_payload, &signature) {
@@ -178,8 +179,8 @@ pub fn verify_webauthn_assertion(params: &WebAuthnAssertionParams) -> Result<boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::p256::elliptic_curve::Generate as _;
     use p256::ecdsa::{signature::Signer, SigningKey};
-    use rand::rngs::OsRng;
 
     const TEST_RP_ID: &str = "auth.example.com";
     const TEST_ORIGIN: &str = "https://auth.example.com";
@@ -223,9 +224,9 @@ mod tests {
 
     #[test]
     fn valid_assertion_passes() {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let pubkey = verifying_key.to_encoded_point(true);
+        let pubkey = verifying_key.to_sec1_point(true);
         let challenge = b"random-challenge-bytes-1234";
 
         let (auth_data, client_data, sig) =
@@ -247,9 +248,9 @@ mod tests {
 
     #[test]
     fn wrong_origin_rejected() {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let pubkey = verifying_key.to_encoded_point(true);
+        let pubkey = verifying_key.to_sec1_point(true);
         let challenge = b"test-challenge";
 
         let (auth_data, client_data, sig) =
@@ -277,9 +278,9 @@ mod tests {
 
     #[test]
     fn wrong_rp_id_rejected() {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let pubkey = verifying_key.to_encoded_point(true);
+        let pubkey = verifying_key.to_sec1_point(true);
         let challenge = b"test-challenge";
 
         let (auth_data, client_data, sig) =
@@ -307,9 +308,9 @@ mod tests {
 
     #[test]
     fn wrong_challenge_rejected() {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let pubkey = verifying_key.to_encoded_point(true);
+        let pubkey = verifying_key.to_sec1_point(true);
         let challenge = b"correct-challenge";
 
         let (auth_data, client_data, sig) =
@@ -337,9 +338,9 @@ mod tests {
 
     #[test]
     fn invalid_signature_length_rejected() {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let pubkey = verifying_key.to_encoded_point(true);
+        let pubkey = verifying_key.to_sec1_point(true);
         let challenge = b"test-challenge";
 
         let (auth_data, client_data, _sig) =
@@ -367,9 +368,9 @@ mod tests {
 
     #[test]
     fn malformed_client_data_json_rejected() {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let pubkey = verifying_key.to_encoded_point(true);
+        let pubkey = verifying_key.to_sec1_point(true);
         let challenge = b"test-challenge";
 
         let (auth_data, _client_data, sig) =
@@ -397,9 +398,9 @@ mod tests {
 
     #[test]
     fn tampered_signature_returns_false() {
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let pubkey = verifying_key.to_encoded_point(true);
+        let pubkey = verifying_key.to_sec1_point(true);
         let challenge = b"test-challenge";
 
         let (auth_data, client_data, mut sig) =

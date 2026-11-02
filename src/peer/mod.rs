@@ -102,6 +102,8 @@ impl DIDMethod for PeerMethod {
 mod tests {
     use super::*;
     use crate::key::{ED25519_PREFIX, P256_PREFIX};
+    use ::p256::ecdsa::signature::Signer as _;
+    use ::p256::elliptic_curve::Generate as _;
     use ed25519_dalek::{Signer, SigningKey as Ed25519SigningKey};
     use p256::ecdsa::{Signature as P256Sig, SigningKey as P256SigningKey};
     use rand::rngs::OsRng;
@@ -113,7 +115,7 @@ mod tests {
     }
 
     fn z_encode_p256(key: &P256SigningKey) -> String {
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let compressed = key.verifying_key().to_sec1_point(true);
         let mut bytes = P256_PREFIX.to_vec();
         bytes.extend_from_slice(compressed.as_bytes());
         bs58::encode(&bytes).into_string()
@@ -131,7 +133,7 @@ mod tests {
 
     #[test]
     fn variant0_p256_roundtrip() {
-        let key = P256SigningKey::random(&mut OsRng);
+        let key = P256SigningKey::generate();
         let did = format!("did:peer:0z{}", z_encode_p256(&key));
         let sig: P256Sig = key.sign(b"p256 peer v0");
         assert!(PeerMethod

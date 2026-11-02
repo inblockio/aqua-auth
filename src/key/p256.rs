@@ -4,7 +4,7 @@ use crate::cipher_suite::CipherSuite;
 use crate::crypto_error::CryptoError;
 use crate::did::pubkey_from_p256_did;
 use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
-use p256::EncodedPoint;
+use p256::Sec1Point;
 
 pub struct P256Suite;
 
@@ -23,10 +23,10 @@ impl CipherSuite for P256Suite {
 
     fn verify(&self, did: &str, message: &str, signature: &[u8]) -> Result<bool, CryptoError> {
         let pubkey_bytes = pubkey_from_p256_did(did)?;
-        let point = EncodedPoint::from_bytes(pubkey_bytes).map_err(|e| {
+        let point = Sec1Point::from_bytes(pubkey_bytes).map_err(|e| {
             CryptoError::InvalidSignature(format!("invalid p256 encoded point: {e}"))
         })?;
-        let verifying_key = VerifyingKey::from_encoded_point(&point)
+        let verifying_key = VerifyingKey::from_sec1_point(&point)
             .map_err(|e| CryptoError::InvalidSignature(format!("invalid p256 pubkey: {e}")))?;
 
         // Accept both DER and fixed-size (64-byte r||s) encoding.
@@ -52,12 +52,12 @@ impl CipherSuite for P256Suite {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::p256::elliptic_curve::Generate as _;
     use p256::ecdsa::{signature::Signer, SigningKey};
-    use rand::rngs::OsRng;
 
     fn make_keypair() -> (SigningKey, String) {
-        let signing_key = SigningKey::random(&mut OsRng);
-        let compressed = signing_key.verifying_key().to_encoded_point(true);
+        let signing_key = SigningKey::generate();
+        let compressed = signing_key.verifying_key().to_sec1_point(true);
         let did = format!("did:pkh:p256:0x{}", hex::encode(compressed.as_bytes()));
         (signing_key, did)
     }

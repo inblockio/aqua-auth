@@ -128,7 +128,7 @@ impl RecoveredAssertion {
 
 /// The `did:key` of a P-256 verifying key (compressed SEC1 point).
 fn did_key_of(vk: &VerifyingKey) -> String {
-    let point = vk.to_encoded_point(true);
+    let point = vk.to_sec1_point(true);
     let compressed: &[u8; 33] = point
         .as_bytes()
         .try_into()
@@ -251,12 +251,21 @@ pub fn verify_and_recover(
     // probability about 2^-128 for P-256). Negating s swaps the two keys, so
     // the candidate set does not depend on the signature's s form.
     let sig = Signature::from_der(&signature).map_err(|_| E::BadSignature)?;
-    let sig = sig.normalize_s().unwrap_or(sig);
+    // ecdsa 0.17 `normalize_s` is unconditional: it returns the low-`s`
+    // signature (the input itself when `s` is already low).
+    let sig = sig.normalize_s();
     let z = Sha256::digest(signed_payload(&auth_data_bytes, &client_data_json));
     let recover = |y_odd: bool| {
-        VerifyingKey::recover_from_prehash(&z, &sig, RecoveryId::new(y_odd, false))
-            .map_err(|_| E::BadSignature)
+        let vk = VerifyingKey::recover_from_prehash(&z, &sig, RecoveryId::new(y_odd, false))
+            .map_err(|_| E::BadSignature)?;
+        // ecdsa 0.16 ended `recover_from_prehash` by verifying the signature
+        // against the recovered key; 0.17 no longer does. Keep that
+        // post-condition so the candidate set is exactly the 0.16 one.
+        p256::ecdsa::signature::hazmat::PrehashVerifier::verify_prehash(&vk, &z, &sig)
+            .map_err(|_| E::BadSignature)?;
+        Ok(vk)
     };
+
     let candidates = [recover(false)?, recover(true)?];
 
     Ok(RecoveredAssertion {
@@ -401,7 +410,7 @@ mod tests {
     fn recover_property_signer_among_exactly_two_candidates() {
         let mut rng = StdRng::seed_from_u64(0x5eed_0002);
         for i in 0..256 {
-            let pk = passkey_with(SigningKey::random(&mut rng));
+            let pk = passkey_with(crate::webauthn_testkit::p256_key_from_rng(&mut rng));
             let mut challenge = [0u8; 32];
             rng.fill_bytes(&mut challenge);
             let a = pk.assert(&AssertOpts::new(&challenge, ORIGIN));
@@ -444,7 +453,7 @@ mod tests {
             let mut v: Vec<Vec<u8>> = rec
                 .candidates
                 .iter()
-                .map(|k| k.to_encoded_point(true).as_bytes().to_vec())
+                .map(|k| k.to_sec1_point(true).as_bytes().to_vec())
                 .collect();
             v.sort();
             v
@@ -786,7 +795,7 @@ mod tests {
         let ad = unb64(&a.response.authenticator_data);
         let cdj = unb64(&a.response.client_data_json);
         let sig = Signature::from_der(&unb64(&a.response.signature)).unwrap();
-        let pubkey = pk.key.verifying_key().to_encoded_point(true);
+        let pubkey = pk.key.verifying_key().to_sec1_point(true);
         let params = WebAuthnAssertionParams {
             credential_public_key: pubkey.as_bytes(),
             authenticator_data: &ad,

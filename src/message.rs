@@ -162,11 +162,11 @@ mod tests {
 
     #[test]
     fn did_key_p256_message() {
+        use ::p256::elliptic_curve::Generate as _;
         use p256::ecdsa::SigningKey;
-        use rand::rngs::OsRng;
 
-        let key = SigningKey::random(&mut OsRng);
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let key = SigningKey::generate();
+        let compressed = key.verifying_key().to_sec1_point(true);
         let mut bytes = crate::key::P256_PREFIX.to_vec();
         bytes.extend_from_slice(compressed.as_bytes());
         let did = format!("did:key:z{}", bs58::encode(&bytes).into_string());

@@ -7,7 +7,7 @@ use crate::{crypto_error::CryptoError, did_method::DIDMethod};
 use ::p256::ecdsa::signature::Verifier;
 use ::p256::{
     ecdsa::{Signature as P256Sig, VerifyingKey as P256Key},
-    EncodedPoint,
+    Sec1Point,
 };
 use ed25519_dalek::{Signature as Ed25519Sig, VerifyingKey as Ed25519Key};
 
@@ -70,10 +70,10 @@ pub(crate) fn verify_with_key(
                 .is_ok())
         }
         KeyType::P256(raw) => {
-            let point = EncodedPoint::from_bytes(&raw).map_err(|e| {
+            let point = Sec1Point::from_bytes(&raw).map_err(|e| {
                 CryptoError::InvalidSignature(format!("invalid P-256 encoded point: {e}"))
             })?;
-            let verifying_key = P256Key::from_encoded_point(&point)
+            let verifying_key = P256Key::from_sec1_point(&point)
                 .map_err(|e| CryptoError::InvalidSignature(format!("invalid P-256 key: {e}")))?;
             let sig = P256Sig::from_der(signature)
                 .or_else(|_| P256Sig::from_slice(signature))
@@ -211,7 +211,9 @@ impl DIDMethod for KeyMethod {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::p256::ecdsa::signature::Signer as _;
     use ::p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
+    use ::p256::elliptic_curve::Generate as _;
     use ed25519_dalek::{Signer, SigningKey as Ed25519SigningKey};
     use rand::rngs::OsRng;
 
@@ -222,7 +224,7 @@ mod tests {
     }
 
     pub(super) fn p256_did(key: &P256SigningKey) -> String {
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let compressed = key.verifying_key().to_sec1_point(true);
         let mut bytes = P256_PREFIX.to_vec();
         bytes.extend_from_slice(compressed.as_bytes());
         format!("did:key:z{}", bs58::encode(&bytes).into_string())
@@ -253,7 +255,7 @@ mod tests {
 
     #[test]
     fn p256_roundtrip_fixed() {
-        let key = P256SigningKey::random(&mut OsRng);
+        let key = P256SigningKey::generate();
         let did = p256_did(&key);
         let sig: P256Signature = key.sign(b"hello p256 key");
         assert!(KeyMethod
@@ -263,7 +265,7 @@ mod tests {
 
     #[test]
     fn p256_roundtrip_der() {
-        let key = P256SigningKey::random(&mut OsRng);
+        let key = P256SigningKey::generate();
         let did = p256_did(&key);
         let sig: P256Signature = key.sign(b"hello p256 key");
         assert!(KeyMethod
@@ -273,8 +275,8 @@ mod tests {
 
     #[test]
     fn p256_wrong_key_rejects() {
-        let key = P256SigningKey::random(&mut OsRng);
-        let key2 = P256SigningKey::random(&mut OsRng);
+        let key = P256SigningKey::generate();
+        let key2 = P256SigningKey::generate();
         let did2 = p256_did(&key2);
         let sig: P256Signature = key.sign(b"test");
         assert!(!KeyMethod.verify(&did2, "test", &sig.to_bytes()).unwrap());
@@ -289,7 +291,7 @@ mod tests {
 
     #[test]
     fn display_label_p256() {
-        let key = P256SigningKey::random(&mut OsRng);
+        let key = P256SigningKey::generate();
         let label = KeyMethod.display_label(&p256_did(&key)).unwrap();
         assert!(label.contains("P-256"), "{label}");
     }
@@ -319,7 +321,7 @@ mod tests {
 
     #[test]
     fn ed25519_pubkey_from_did_key_rejects_p256() {
-        let key = P256SigningKey::random(&mut OsRng);
+        let key = P256SigningKey::generate();
         assert!(ed25519_pubkey_from_did_key(&p256_did(&key)).is_err());
     }
 
@@ -336,10 +338,19 @@ mod tests {
         use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(0x0a0a_d1d0);
         for _ in 0..64 {
-            let key = P256SigningKey::random(&mut rng);
+            // p256 0.13 `SigningKey::random` sampling (rejection over
+            // big-endian 32-byte draws), kept so the 64 keys are unchanged.
+            let key = loop {
+                let mut bytes = ::p256::FieldBytes::default();
+                rand::RngCore::fill_bytes(&mut rng, &mut bytes);
+                if let Ok(key) = P256SigningKey::from_bytes(&bytes) {
+                    break key;
+                }
+            };
+
             let compressed: [u8; 33] = key
                 .verifying_key()
-                .to_encoded_point(true)
+                .to_sec1_point(true)
                 .as_bytes()
                 .try_into()
                 .unwrap();
@@ -374,8 +385,8 @@ mod tests {
         assert!(p256_pubkey_from_did_key(&did).is_err());
 
         // The did:pkh spelling is a separate principal with its own parser.
-        let key = P256SigningKey::random(&mut OsRng);
-        let compressed = key.verifying_key().to_encoded_point(true);
+        let key = P256SigningKey::generate();
+        let compressed = key.verifying_key().to_sec1_point(true);
         let pkh = format!("did:pkh:p256:0x{}", hex::encode(compressed.as_bytes()));
         assert!(p256_pubkey_from_did_key(&pkh).is_err());
     }

@@ -27,6 +27,23 @@ const FLAG_AT: u8 = 0x40;
 /// COSE algorithm identifier for ES256.
 const COSE_ES256: i64 = -7;
 
+/// A P-256 signing key drawn from `rng` exactly as `SigningKey::random` did
+/// on p256 0.13: fill 32 bytes, take them as a big-endian scalar, and draw
+/// again while that scalar is zero or not below the group order.
+///
+/// p256 0.14 takes a `rand_core` 0.10 RNG and samples differently, so calling
+/// it would change every seeded key (and so every seeded `did:key`) this
+/// testkit hands out. This keeps them byte-identical across the upgrade.
+pub(crate) fn p256_key_from_rng<R: RngCore + ?Sized>(rng: &mut R) -> SigningKey {
+    let mut bytes = p256::FieldBytes::default();
+    loop {
+        rng.fill_bytes(&mut bytes);
+        if let Ok(key) = SigningKey::from_bytes(&bytes) {
+            return key;
+        }
+    }
+}
+
 /// A seeded software passkey: one P-256 key, one credential ID, one RP ID.
 ///
 /// All fields are public so a test can swap one of them, for example a
@@ -85,7 +102,7 @@ impl SoftPasskey {
     /// `StdRng::seed_from_u64(seed)`, in that order.
     pub fn new_seeded(seed: u64, rp_id: &str) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
-        let key = SigningKey::random(&mut rng);
+        let key = p256_key_from_rng(&mut rng);
         let mut credential_id = vec![0u8; 16];
         rng.fill_bytes(&mut credential_id);
         let mut user_handle = vec![0u8; 32];
@@ -100,7 +117,7 @@ impl SoftPasskey {
 
     /// The credential's `did:key:zDn...`.
     pub fn did(&self) -> String {
-        let point = self.key.verifying_key().to_encoded_point(true);
+        let point = self.key.verifying_key().to_sec1_point(true);
         let compressed: &[u8; 33] = point
             .as_bytes()
             .try_into()
@@ -138,7 +155,8 @@ impl SoftPasskey {
         let low: Signature = self
             .key
             .sign(&signed_payload(authenticator_data, client_data_json));
-        let low = low.normalize_s().unwrap_or(low);
+        let low = low.normalize_s();
+
         let signature = if high_s {
             let (r, s) = low.split_scalars();
             Signature::from_scalars(r.to_bytes(), (-*s).to_bytes())
@@ -167,7 +185,7 @@ impl SoftPasskey {
     /// any public key and credential ID equally well. A server must take a
     /// principal only from a verified assertion.
     pub fn attestation_none(&self, challenge: &[u8], origin: &str) -> serde_json::Value {
-        let point = self.key.verifying_key().to_encoded_point(false);
+        let point = self.key.verifying_key().to_sec1_point(false);
         let x = point.x().expect("an uncompressed point has x");
         let y = point.y().expect("an uncompressed point has y");
         let mut attested = vec![0u8; 16]; // AAGUID: none
@@ -278,6 +296,13 @@ mod tests {
         verify_and_recover, AssertionError, ExpectedChallenge, RecoveredAssertion, B64URL,
     };
     use crate::webauthn_select::DidHint;
+
+    /// Whether `sig`'s `s` is in the upper half-order (what ecdsa 0.16's
+    /// `normalize_s` reported by returning `Some`).
+    fn is_high(sig: &Signature) -> bool {
+        bool::from(p256::elliptic_curve::scalar::IsHigh::is_high(&sig.s()))
+    }
+
     use serde_json::{json, Value};
 
     const RP: &str = "inblock.io";
@@ -320,7 +345,7 @@ mod tests {
         assert!(a.did().starts_with("did:key:zDn"), "{}", a.did());
         // The key is the first draw from the seeded StdRng, the same key the
         // earlier tests of this crate built by hand from the same seed.
-        let first_draw = SigningKey::random(&mut StdRng::seed_from_u64(1));
+        let first_draw = p256_key_from_rng(&mut StdRng::seed_from_u64(1));
         assert_eq!(a.key.verifying_key(), first_draw.verifying_key());
     }
 
@@ -344,7 +369,7 @@ mod tests {
         assert_eq!(unb64(&a.response.authenticator_data), ad);
         assert_eq!(a.response.user_handle.as_deref().map(unb64), pk.user_handle);
         let sig = Signature::from_der(&unb64(&a.response.signature)).unwrap();
-        assert!(sig.normalize_s().is_none(), "low-S by default");
+        assert!(!is_high(&sig), "low-S by default");
         let rec = verify(&a).unwrap();
         assert!(rec.candidate_dids().contains(&pk.did()));
         assert!(rec.user_verified);
@@ -447,8 +472,9 @@ mod tests {
             });
             let low_sig = Signature::from_der(&unb64(&low.response.signature)).unwrap();
             let high_sig = Signature::from_der(&unb64(&high.response.signature)).unwrap();
-            assert!(low_sig.normalize_s().is_none(), "seed {seed}: low-S");
-            assert_eq!(high_sig.normalize_s(), Some(low_sig), "seed {seed}: twin");
+            assert!(!is_high(&low_sig), "seed {seed}: low-S");
+            assert!(is_high(&high_sig), "seed {seed}: high-S");
+            assert_eq!(high_sig.normalize_s(), low_sig, "seed {seed}: twin");
             for a in [&low, &high] {
                 let rec =
                     verify_and_recover(a, ExpectedChallenge::Exact(&challenge), &policy(true))
@@ -469,7 +495,7 @@ mod tests {
             hex::encode(&spki[..27]),
             "3059301306072a8648ce3d020106082a8648ce3d03010703420004"
         );
-        let point = pk.key.verifying_key().to_encoded_point(false);
+        let point = pk.key.verifying_key().to_sec1_point(false);
         assert_eq!(&spki[26..], point.as_bytes());
         assert_eq!(DidHint::from_spki_der(&spki).unwrap().as_str(), pk.did());
     }
@@ -498,7 +524,7 @@ mod tests {
         // Authenticator data (WebAuthn sections 6.1 and 6.5.1) with the
         // credential key as a COSE_Key (RFC 9053: kty EC2, alg ES256, crv
         // P-256), written out byte by byte from the specs.
-        let point = pk.key.verifying_key().to_encoded_point(false);
+        let point = pk.key.verifying_key().to_sec1_point(false);
         let mut ad = Sha256::digest(RP.as_bytes()).to_vec();
         ad.push(0x45); // UP | UV | AT
         ad.extend_from_slice(&[0; 4]); // signCount

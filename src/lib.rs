@@ -250,11 +250,11 @@ mod tests {
 
     #[test]
     fn dispatch_eip155() {
+        use ::p256::elliptic_curve::Generate as _;
         use k256::ecdsa::SigningKey;
-        use rand::rngs::OsRng;
         use sha3::{Digest, Keccak256};
 
-        let secret = k256::SecretKey::random(&mut OsRng);
+        let secret = k256::SecretKey::generate();
         let signing_key = SigningKey::from(&secret);
         let addr = address_from_verifying_key(signing_key.verifying_key());
         let did_str = format!("did:pkh:eip155:1:0x{}", eip55_checksum(&addr));
@@ -267,7 +267,7 @@ mod tests {
             h.update(msg.as_bytes());
             h.finalize().into()
         };
-        let (sig, rec_id) = signing_key.sign_prehash_recoverable(&prehash).unwrap();
+        let (sig, rec_id) = signing_key.sign_prehash_recoverable(&prehash);
         let mut sig_bytes = [0u8; 65];
         sig_bytes[..64].copy_from_slice(&sig.to_bytes());
         sig_bytes[64] = u8::from(rec_id) + 27;
@@ -292,12 +292,12 @@ mod tests {
 
     #[test]
     fn dispatch_p256() {
+        use ::p256::elliptic_curve::Generate as _;
         use p256::ecdsa::{signature::Signer, Signature, SigningKey};
-        use rand::rngs::OsRng;
 
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = signing_key.verifying_key();
-        let compressed = verifying_key.to_encoded_point(true);
+        let compressed = verifying_key.to_sec1_point(true);
         let did_str = format!("did:pkh:p256:0x{}", hex::encode(compressed.as_bytes()));
 
         let msg = "test dispatch p256";
